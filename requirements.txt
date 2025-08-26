@@ -1,0 +1,9 @@
+streamlit==1.36.0
+pandas
+duckdb>=1.0.0
+openpyxl
+plotly
+python-dotenv
+openai>=1.0.0
+streamlit-authenticator
+bcrypt
