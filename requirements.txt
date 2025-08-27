@@ -5,7 +5,7 @@ openpyxl
 plotly
 python-dotenv
 openai>=1.0.0
-streamlit-authenticator
+streamlit-authenticator>=0.3.2
 bcrypt
-
-# force-reinstall-20250827210225
+supabase>=2.5.0
+httpx>=0.24.0
