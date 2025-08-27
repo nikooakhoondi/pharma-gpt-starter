@@ -352,3 +352,65 @@ Return ONLY the SQL query.
                 st.error(f"Query failed: {e}")
 
             st.session_state.chat_history.append({"role": "assistant", "content": sql_query})
+
+import streamlit as st
+import pandas as pd
+from supabase import create_client, Client
+
+# ---------- Supabase connection ----------
+@st.cache_resource
+def get_supabase() -> Client:
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+sb = get_supabase()
+
+# ---------- UI ----------
+allowed_dims = [
+    "سال",
+    "کد ژنریک",
+    "نام ژنریک",
+    "مولکول دارویی",
+    "نام تجاری فرآورده",
+    "شرکت تامین کننده",
+    "تولیدی/وارداتی",
+    "route",
+    "dosage form",
+    "atc code",
+    "Anatomical",
+]
+metrics = ["ارزش ریالی", "قیمت", "تعداد تامین شده"]
+
+st.header("Pivot (server-side over ALL data)")
+
+c1, c2, c3 = st.columns(3)
+dim1   = c1.selectbox("Dimension 1", allowed_dims, index=0)
+dim2   = c2.selectbox("Dimension 2", allowed_dims, index=5)
+metric = c3.selectbox("Metric (sum of)", metrics, index=0)
+
+y1, y2 = st.slider("Year range (سال)", min_value=1390, max_value=1500, value=(1400, 1404))
+
+@st.cache_data(ttl=300)
+def run_pivot(dim1, dim2, metric, y1, y2):
+    res = sb.rpc(
+        "pivot_2d_numeric",
+        {"dim1": dim1, "dim2": dim2, "metric": metric, "year_from": int(y1), "year_to": int(y2)}
+    ).execute()
+    return pd.DataFrame(res.data or [])
+
+df = run_pivot(dim1, dim2, metric, y1, y2)
+st.caption(f"Returned {len(df)} aggregated rows.")
+st.dataframe(df)  # columns: d1, d2, total_value, rows
+
+# Simple chart
+if not df.empty and "total_value" in df.columns:
+    st.bar_chart(df.sort_values("total_value", ascending=False).set_index(["d1","d2"])[["total_value"]])
+
+# Download
+if not df.empty:
+    st.download_button(
+        "Download CSV",
+        df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="pivot.csv",
+        mime="text/csv"
+    )
+
