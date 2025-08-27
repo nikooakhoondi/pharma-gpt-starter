@@ -7,3 +7,5 @@ python-dotenv
 openai>=1.0.0
 streamlit-authenticator
 bcrypt
+
+# force-reinstall-20250827210225
