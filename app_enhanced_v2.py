@@ -163,7 +163,7 @@ import os, json
 from openai import OpenAI
 
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-TABLE = 'Amarnameh_sheet1'  # Supabase table name
+TABLE = 'Amarname_sheet1'  # Supabase table name
 
 st.markdown("---")
 st.subheader("💬 Data-Aware Chat (Persian/English)")
