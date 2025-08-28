@@ -157,48 +157,174 @@ if not df.empty:
 st.info("Need the old detailed filter/table view? We can add a Supabase-backed table page next.")
 
 # -----------------------------------------------------------
-# GPT Chat (Persian/English)
+# Data-Aware Chat (uses Supabase data, no raw SQL)
 # -----------------------------------------------------------
-import os
+import os, json
 from openai import OpenAI
 
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+TABLE = 'Amarnameh_sheet1'  # Supabase table name
+
+st.markdown("---")
+st.subheader("💬 Data-Aware Chat (Persian/English)")
+
 if not API_KEY:
-    st.markdown("---")
-    st.subheader("💬 Chat with GPT")
-    st.warning("OpenAI API key not found in Secrets or .env — chat is disabled.")
+    st.warning("OpenAI API key not found — data chat is disabled.")
 else:
     client = OpenAI(api_key=API_KEY)
 
-    st.markdown("---")
-    st.subheader("💬 Chat with GPT (Persian/English)")
+    # 1) Whitelists so the model can only ask for safe things
+    allowed_dims = [
+        "سال","کد ژنریک","نام ژنریک","مولکول دارویی","نام تجاری فرآورده",
+        "شرکت تامین کننده","تولیدی/وارداتی","route","dosage form","atc code","Anatomical",
+    ]
+    allowed_metrics = ["ارزش ریالی","قیمت","تعداد تامین شده"]
+    # columns you permit for filtering in raw rows:
+    allowed_filter_cols = [
+        "سال","کد ژنریک","نام ژنریک","مولکول دارویی","نام تجاری فرآورده",
+        "شرکت تامین کننده","تولیدی/وارداتی","route","dosage form","atc code","Anatomical",
+    ]
+    # map some common Persian synonyms -> canonical column names (optional)
+    synonyms = {
+        "شرکت": "شرکت تامین کننده",
+        "تامین کننده": "شرکت تامین کننده",
+        "ژنریک": "نام ژنریک",
+        "نام تجاری": "نام تجاری فرآورده",
+        "کد": "کد ژنریک",
+        "سال شمسی": "سال",
+        "مسیر": "route",
+        "شکل": "dosage form",
+        "ارزش": "ارزش ریالی",
+        "قیمت واحد": "قیمت",
+        "تعداد": "تعداد تامین شده",
+        "ATC": "atc code",
+    }
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    guide = {
+        "allowed_dims": allowed_dims,
+        "allowed_metrics": allowed_metrics,
+        "allowed_filters": allowed_filter_cols,
+    }
 
-    # display chat history
-    for msg in st.session_state.chat_history:
+    if "data_chat" not in st.session_state:
+        st.session_state.data_chat = []
+
+    for msg in st.session_state.data_chat:
         st.chat_message(msg["role"]).write(msg["content"])
 
-    # input box
-    user_q = st.chat_input("Ask me anything about your data or in general…")
+    user_q = st.chat_input("مثلاً: سهم ارزش ریالی هر شرکت در سال‌های ۱۴۰۰ تا ۱۴۰۲؟")
     if user_q:
         st.chat_message("user").write(user_q)
-        st.session_state.chat_history.append({"role": "user", "content": user_q})
+        st.session_state.data_chat.append({"role": "user", "content": user_q})
+
+        # 2) Ask the model to produce a JSON plan (pivot OR rows)
+        system_prompt = f"""
+You are a planner that outputs ONLY compact JSON (no prose). You control a data tool with:
+- pivot(dim1, dim2, metric, year_from, year_to)  # both dims must be from allowed_dims; metric from allowed_metrics
+- rows(filters, limit)  # filters is an object of column -> value OR list of values; only columns in allowed_filters
+
+Rules:
+- Use Persian or English inputs.
+- If the user asks for shares or totals by categories, use "pivot".
+- If the user wants raw examples/records, use "rows".
+- Respect year ranges if mentioned; otherwise leave them null.
+- If user gives synonyms, normalize using this map: {synonyms}
+- Keep JSON small; do not include analysis, only fields below.
+
+Allowed:
+{json.dumps(guide, ensure_ascii=False)}
+
+Output schema (one of these):
+{{"intent":"pivot","dim1":"...", "dim2":"...", "metric":"...", "year_from":1400, "year_to":1404, "top_n":10}}
+OR
+{{"intent":"rows","filters":{{"ستون":"مقدار" }}, "limit": 200}}
+""".strip()
 
         try:
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",   # you can use "gpt-4o" or "gpt-3.5-turbo" too
+            plan_resp = client.chat.completions.create(
+                model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that can answer in Persian or English."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_q},
                 ],
-                temperature=0.4,
+                temperature=0,
             )
-            answer = resp.choices[0].message.content.strip()
+            plan_text = plan_resp.choices[0].message.content.strip()
+            # Extract JSON (in case model adds stray text)
+            start = plan_text.find("{")
+            end = plan_text.rfind("}")
+            if start == -1 or end == -1:
+                raise ValueError("No JSON plan returned.")
+            plan = json.loads(plan_text[start:end+1])
         except Exception as e:
-            answer = f"⚠️ OpenAI error: {e}"
+            st.chat_message("assistant").write(f"⚠️ برنامه‌ریز نتوانست برنامه بدهد: {e}")
+            st.session_state.data_chat.append({"role": "assistant", "content": f"⚠️ برنامه‌ریز نتوانست برنامه بدهد: {e}"})
+            plan = None
+
+        answer = None
+        if plan:
+            try:
+                if plan.get("intent") == "pivot":
+                    dim1 = plan.get("dim1")
+                    dim2 = plan.get("dim2")
+                    metric = plan.get("metric", "ارزش ریالی")
+                    y1 = plan.get("year_from")
+                    y2 = plan.get("year_to")
+                    top_n = int(plan.get("top_n") or 20)
+
+                    # validate
+                    if dim1 not in allowed_dims or dim2 not in allowed_dims:
+                        raise ValueError("Invalid dimension(s).")
+                    if metric not in allowed_metrics:
+                        raise ValueError("Invalid metric.")
+
+                    # call your server-side RPC
+                    res = sb.rpc("pivot_2d_numeric", {
+                        "dim1": dim1, "dim2": dim2, "metric": metric,
+                        "year_from": int(y1) if y1 else None,
+                        "year_to": int(y2) if y2 else None
+                    }).execute()
+                    df_ans = pd.DataFrame(res.data or [])
+                    if not df_ans.empty:
+                        df_ans = df_ans.sort_values("total_value", ascending=False).head(top_n)
+                        st.dataframe(df_ans, use_container_width=True)
+                        answer = f"نتیجه‌ی Pivot برای «{dim1} × {dim2}» روی «{metric}»" + (f" در بازه‌ی {y1}-{y2}" if y1 and y2 else "") + f" (Top {top_n})."
+                    else:
+                        answer = "هیچ نتیجه‌ای برای این Pivot پیدا نشد."
+
+                elif plan.get("intent") == "rows":
+                    filters = plan.get("filters") or {}
+                    limit = int(plan.get("limit") or 200)
+                    # validate and build a PostgREST filter
+                    q = sb.table(TABLE).select("*")
+                    for col, val in filters.items():
+                        # normalize using synonyms
+                        col = synonyms.get(col, col)
+                        if col not in allowed_filter_cols:
+                            continue
+                        if isinstance(val, list):
+                            # use in_ filter
+                            q = q.in_(col, val)
+                        else:
+                            q = q.eq(col, val)
+                    q = q.limit(limit)
+                    res = q.execute()
+                    df_ans = pd.DataFrame(res.data or [])
+                    if not df_ans.empty:
+                        st.dataframe(df_ans, use_container_width=True)
+                        answer = f"{len(df_ans)} ردیف مطابق فیلترها نمایش داده شد (حداکثر {limit})."
+                    else:
+                        answer = "ردیفی مطابق شرایط پیدا نشد."
+
+                else:
+                    answer = "جهت پاسخ نیاز است مشخص کنید Pivot می‌خواهید یا ردیف‌های خام."
+
+            except Exception as e:
+                answer = f"⚠️ اجرای برنامه شکست خورد: {e}"
+
+        if answer is None:
+            answer = "سوال را واضح‌تر بپرس یا مثال بده تا Pivot یا فیلتر مناسب بسازم."
 
         st.chat_message("assistant").write(answer)
-        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+        st.session_state.data_chat.append({"role": "assistant", "content": answer})
 
