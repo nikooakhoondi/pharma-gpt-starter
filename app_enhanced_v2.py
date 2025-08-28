@@ -125,17 +125,31 @@ df = run_pivot(dim1, dim2, metric, y1, y2)
 st.caption(f"Returned {len(df)} aggregated rows.")
 st.dataframe(df)  # columns expected: d1, d2, total_value, rows
 
-# --- SAFE CHART (handles missing d1/d2) ---
-if not df.empty and "total_value" in df.columns:
-    idx_cols = [c for c in ("d1", "d2") if c in df.columns]
-    chart_df = df.copy().sort_values("total_value", ascending=False)
+# ---- SUPER-SAFE CHART ----
+if not df.empty:
+    # optional debug: see what columns we actually have
+    # st.write("Columns:", list(df.columns))
 
-    if idx_cols:
-        chart_df = chart_df.set_index(idx_cols)[["total_value"]]
+    if "total_value" in df.columns:
+        # Build a single label column from whatever dims exist, then plot total_value
+        label_parts = []
+        if "d1" in df.columns: label_parts.append(df["d1"].astype(str))
+        if "d2" in df.columns: label_parts.append(df["d2"].astype(str))
+
+        if label_parts:
+            label = " — ".join(s.fillna("") for s in label_parts)
+        else:
+            # no d1/d2 returned; make a synthetic label index
+            label = pd.Series([f"row {i+1}" for i in range(len(df))])
+
+        chart_df = pd.DataFrame({
+            "label": label,
+            "total_value": df["total_value"]
+        }).sort_values("total_value", ascending=False)
+
+        st.bar_chart(chart_df.set_index("label")[["total_value"]])
     else:
-        chart_df = chart_df[["total_value"]]
-
-    st.bar_chart(chart_df)
+        st.info("No 'total_value' column returned from the RPC, skipping chart.")
 
 
 st.info("Need the old detailed filter/table view? We can add a Supabase-backed table page next.")
