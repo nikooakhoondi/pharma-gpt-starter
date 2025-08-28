@@ -125,15 +125,17 @@ df = run_pivot(dim1, dim2, metric, y1, y2)
 st.caption(f"Returned {len(df)} aggregated rows.")
 st.dataframe(df)  # columns expected: d1, d2, total_value, rows
 
+# --- SAFE CHART (handles missing d1/d2) ---
 if not df.empty and "total_value" in df.columns:
-    st.bar_chart(df.sort_values("total_value", ascending=False).set_index(["d1", "d2"])[["total_value"]])
+    idx_cols = [c for c in ("d1", "d2") if c in df.columns]
+    chart_df = df.copy().sort_values("total_value", ascending=False)
 
-if not df.empty:
-    st.download_button(
-        "Download CSV",
-        df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="pivot.csv",
-        mime="text/csv"
-    )
+    if idx_cols:
+        chart_df = chart_df.set_index(idx_cols)[["total_value"]]
+    else:
+        chart_df = chart_df[["total_value"]]
+
+    st.bar_chart(chart_df)
+
 
 st.info("Need the old detailed filter/table view? We can add a Supabase-backed table page next.")
