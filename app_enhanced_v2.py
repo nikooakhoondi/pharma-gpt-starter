@@ -132,24 +132,25 @@ if not df.empty:
 
     if "total_value" in df.columns:
         # Build a single label column from whatever dims exist, then plot total_value
-        label_parts = []
-        if "d1" in df.columns: label_parts.append(df["d1"].astype(str))
-        if "d2" in df.columns: label_parts.append(df["d2"].astype(str))
+label_parts = []
+if "d1" in df.columns: label_parts.append(df["d1"].astype(str))
+if "d2" in df.columns: label_parts.append(df["d2"].astype(str))
 
-        if label_parts:
-            label = " — ".join(s.fillna("") for s in label_parts)
-        else:
-            # no d1/d2 returned; make a synthetic label index
-            label = pd.Series([f"row {i+1}" for i in range(len(df))])
+if label_parts:
+    # element-wise concat: s1, then s1+" — "+s2, ...
+    label = label_parts[0].fillna("")
+    for s in label_parts[1:]:
+        label = label.str.cat(s.fillna(""), sep=" — ")
+else:
+    # no d1/d2 returned; make a synthetic label index
+    label = pd.Series([f"row {i+1}" for i in range(len(df))])
 
-        chart_df = pd.DataFrame({
-            "label": label,
-            "total_value": df["total_value"]
-        }).sort_values("total_value", ascending=False)
+chart_df = pd.DataFrame({
+    "label": label,
+    "total_value": df["total_value"]
+}).sort_values("total_value", ascending=False)
 
-        st.bar_chart(chart_df.set_index("label")[["total_value"]])
-    else:
-        st.info("No 'total_value' column returned from the RPC, skipping chart.")
+st.bar_chart(chart_df.set_index("label")[["total_value"]])
 
 
 st.info("Need the old detailed filter/table view? We can add a Supabase-backed table page next.")
