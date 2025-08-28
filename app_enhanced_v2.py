@@ -155,3 +155,50 @@ if not df.empty:
         st.info("No 'total_value' column returned from the RPC, so chart is skipped.")
 
 st.info("Need the old detailed filter/table view? We can add a Supabase-backed table page next.")
+
+# -----------------------------------------------------------
+# GPT Chat (Persian/English)
+# -----------------------------------------------------------
+import os
+from openai import OpenAI
+
+API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+if not API_KEY:
+    st.markdown("---")
+    st.subheader("💬 Chat with GPT")
+    st.warning("OpenAI API key not found in Secrets or .env — chat is disabled.")
+else:
+    client = OpenAI(api_key=API_KEY)
+
+    st.markdown("---")
+    st.subheader("💬 Chat with GPT (Persian/English)")
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # display chat history
+    for msg in st.session_state.chat_history:
+        st.chat_message(msg["role"]).write(msg["content"])
+
+    # input box
+    user_q = st.chat_input("Ask me anything about your data or in general…")
+    if user_q:
+        st.chat_message("user").write(user_q)
+        st.session_state.chat_history.append({"role": "user", "content": user_q})
+
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",   # you can use "gpt-4o" or "gpt-3.5-turbo" too
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that can answer in Persian or English."},
+                    {"role": "user", "content": user_q},
+                ],
+                temperature=0.4,
+            )
+            answer = resp.choices[0].message.content.strip()
+        except Exception as e:
+            answer = f"⚠️ OpenAI error: {e}"
+
+        st.chat_message("assistant").write(answer)
+        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+
