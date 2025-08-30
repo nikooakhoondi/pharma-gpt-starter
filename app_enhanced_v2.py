@@ -321,4 +321,100 @@ with tab_chat:
 
             system_prompt = f"""
 You are a planner that outputs ONLY compact JSON (no prose). You control a data tool with:
-- piv
+- pivot(dim1, dim2, metric, year_from, year_to)
+- rows(filters, limit)
+
+Rules:
+- Use Persian or English inputs.
+- If the user asks for shares or totals by categories, use "pivot".
+- If the user wants raw examples/records, use "rows".
+- Respect year ranges if mentioned; otherwise leave them null.
+- If user gives synonyms, normalize using this map: {synonyms}
+- Keep JSON small; do not include analysis, only fields below.
+
+Allowed:
+{json.dumps(guide, ensure_ascii=False)}
+
+Output schema (one of these):
+{{"intent":"pivot","dim1":"...", "dim2":"...", "metric":"...", "year_from":1400, "year_to":1404, "top_n":10}}
+OR
+{{"intent":"rows","filters":{{"ستون":"مقدار"}}, "limit": 200}}
+""".strip()
+
+            try:
+                plan_resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "system", "content": system_prompt},
+                              {"role": "user", "content": user_q}],
+                    temperature=0,
+                )
+                plan_text = plan_resp.choices[0].message.content.strip()
+                start = plan_text.find("{"); end = plan_text.rfind("}")
+                if start == -1 or end == -1:
+                    raise ValueError("No JSON plan returned.")
+                plan = json.loads(plan_text[start:end+1])
+            except Exception as e:
+                msg = f"⚠️ برنامه‌ریز نتوانست برنامه بدهد: {e}"
+                st.chat_message("assistant").write(msg)
+                st.session_state.data_chat.append({"role": "assistant", "content": msg})
+                plan = None
+
+            answer = None
+            if plan:
+                try:
+                    if plan.get("intent") == "pivot":
+                        dim1 = plan.get("dim1")
+                        dim2 = plan.get("dim2")
+                        metric = plan.get("metric", "ارزش ریالی")
+                        y1 = plan.get("year_from"); y2 = plan.get("year_to")
+                        top_n = int(plan.get("top_n") or 20)
+
+                        if dim1 not in allowed_dims or dim2 not in allowed_dims:
+                            raise ValueError("Invalid dimension(s).")
+                        if metric not in allowed_metrics:
+                            raise ValueError("Invalid metric.")
+
+                        res = sb.rpc("pivot_2d_numeric", {
+                            "dim1": dim1, "dim2": dim2, "metric": metric,
+                            "year_from": int(y1) if y1 else None,
+                            "year_to": int(y2) if y2 else None
+                        }).execute()
+                        df_ans = pd.DataFrame(res.data or [])
+                        if not df_ans.empty:
+                            df_ans = df_ans.sort_values("total_value", ascending=False).head(top_n)
+                            st.dataframe(df_ans, use_container_width=True)
+                            answer = f"نتیجه‌ی Pivot برای «{dim1} × {dim2}» روی «{metric}»" + (f" در بازه‌ی {y1}-{y2}" if y1 and y2 else "") + f" (Top {top_n})."
+                        else:
+                            answer = "هیچ نتیجه‌ای برای این Pivot پیدا نشد."
+
+                    elif plan.get("intent") == "rows":
+                        filters = plan.get("filters") or {}
+                        limit = int(plan.get("limit") or 200)
+                        q = sb.table(TABLE).select("*")
+                        for col, val in filters.items():
+                            col = synonyms.get(col, col)
+                            if col not in allowed_filter_cols:
+                                continue
+                            if isinstance(val, list):
+                                q = q.in_(col, val)
+                            else:
+                                q = q.eq(col, val)
+                        q = q.limit(limit)
+                        res = q.execute()
+                        df_ans = pd.DataFrame(res.data or [])
+                        if not df_ans.empty:
+                            st.dataframe(df_ans, use_container_width=True)
+                            answer = f"{len(df_ans)} ردیف مطابق فیلترها نمایش داده شد (حداکثر {limit})."
+                        else:
+                            answer = "ردیفی مطابق شرایط پیدا نشد."
+                    else:
+                        answer = "جهت پاسخ نیاز است مشخص کنید Pivot می‌خواهید یا ردیف‌های خام."
+
+                except Exception as e:
+                    answer = f"⚠️ اجرای برنامه شکست خورد: {e}"
+
+            if answer is None:
+                answer = "سوال را واضح‌تر بپرس یا مثال بده تا Pivot یا فیلتر مناسب بسازم."
+
+            st.chat_message("assistant").write(answer)
+            st.session_state.data_chat.append({"role": "assistant", "content": answer})
