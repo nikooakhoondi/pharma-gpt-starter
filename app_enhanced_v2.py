@@ -268,7 +268,13 @@ with tab_table:
     st.markdown("### خروجی فیلتر شده")
     st.dataframe(df, use_container_width=True, hide_index=True)
     if not df.empty:
-        st.download_button("دانلود CSV", df.to_csv(index=False).encode("utf-8-sig"), "filtered.csv", "text/csv")
+        st.download_button(
+    label="دانلود CSV",
+    data=df.to_csv(index=False).encode("utf-8-sig"),
+    file_name="filtered.csv",
+    mime="text/csv",
+    key="download_csv_filtered"  # 👈 unique key avoids DuplicateWidgetID
+)
 
     # ---- Pivot-like chart from filtered rows (unchanged behaviour) ----
     st.markdown("---")
