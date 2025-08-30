@@ -207,36 +207,111 @@ else:
 tab_table, tab_chat = st.tabs(["📋 Filter/Table", "💬 Chat"])
 
 # ============================ FILTER / TABLE ============================
+# ============================ FILTER / TABLE ============================
 with tab_table:
     st.subheader("فیلترها")
 
-    # ---- Filter UI ----
-    c1, c2 = st.columns(2)
-    with c1:
-        mols   = st.multiselect("مولکول دارویی", options=get_unique(COLS["مولکول دارویی"]))
-        brands = st.multiselect("نام برند", options=get_unique(COLS["نام برند"]))
-        forms  = st.multiselect("شکل دارویی", options=get_unique(COLS["شکل دارویی"]))
-        routes = st.multiselect("طریقه مصرف", options=get_unique(COLS["طریقه مصرف"]))
-    with c2:
-        provs  = st.multiselect("نام تامین کننده", options=get_unique(COLS["نام تامین کننده"]))
-        years  = st.multiselect("سال", options=get_unique(COLS["سال"]))
-        atc_exact = st.multiselect("ATC code (Exact)", options=get_unique(COLS["ATC code"]))
-        atc_prefix = st.text_input("فیلتر ATC بر اساس پیشوند (مثل N06A)", value="")
+    # ---- Debounced filter form ----
+    with st.form("filters_form", clear_on_submit=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            mols   = st.multiselect("مولکول دارویی", options=get_unique(COLS["مولکول دارویی"]))
+            brands = st.multiselect("نام برند", options=get_unique(COLS["نام برند"]))
+            forms  = st.multiselect("شکل دارویی", options=get_unique(COLS["شکل دارویی"]))
+            routes = st.multiselect("طریقه مصرف", options=get_unique(COLS["طریقه مصرف"]))
+        with c2:
+            provs  = st.multiselect("نام تامین کننده", options=get_unique(COLS["نام تامین کننده"]))
+            years  = st.multiselect("سال", options=get_unique(COLS["سال"]))
+            atc_exact = st.multiselect("ATC code (Exact)", options=get_unique(COLS["ATC code"]))
+            atc_prefix = st.text_input("فیلتر ATC بر اساس پیشوند (مثل N06A)", value="")
 
-    prod_type = st.multiselect("وارداتی/تولید داخل", options=get_unique(COLS["وارداتی/تولید داخل"]))
+        prod_type = st.multiselect("وارداتی/تولید داخل", options=get_unique(COLS["وارداتی/تولید داخل"]))
 
-    st.markdown("---")
-    colA, colB, colC = st.columns(3)
-    with colA:
-        sort_by = st.selectbox(
-            "مرتب‌سازی بر اساس",
-            options=[COLS["ارزش ریالی"], COLS["تعداد تامین شده"], COLS["قیمت"], COLS["سال"]],
-            format_func=lambda c: [k for k, v in COLS.items() if v == c][0]
+        st.markdown("---")
+        colA, colB, colC = st.columns(3)
+        with colA:
+            sort_by = st.selectbox(
+                "مرتب‌سازی بر اساس",
+                options=[COLS["ارزش ریالی"], COLS["تعداد تامین شده"], COLS["قیمت"], COLS["سال"]],
+                format_func=lambda c: [k for k, v in COLS.items() if v == c][0]
+            )
+        with colB:
+            descending = st.toggle("نزولی", value=True)
+        with colC:
+            limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
+
+        applied = st.form_submit_button("اعمال فیلترها")
+
+    # initialise once
+    if "filters_last" not in st.session_state:
+        st.session_state.filters_last = None
+
+    # Build a signature of current filters to know if anything changed
+    signature = (
+        tuple(sorted(mols)), tuple(sorted(brands)), tuple(sorted(forms)), tuple(sorted(routes)),
+        tuple(sorted(provs)), tuple(sorted(years)), tuple(sorted(atc_exact)),
+        (atc_prefix or "").strip(), tuple(sorted(prod_type)), sort_by, bool(descending), int(limit_rows)
+    )
+
+    # Only run the DB query if user pressed "اعمال فیلترها" OR first load OR filters actually changed
+    should_query = applied or (st.session_state.filters_last is None) or (st.session_state.filters_last != signature)
+    if should_query:
+        df = query_with_filters(
+            mols, brands, forms, routes, provs, years, atc_exact, atc_prefix, prod_type,
+            sort_by, descending, limit_rows
         )
-    with colB:
-        descending = st.toggle("نزولی", value=True)
-    with colC:
-        limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
+        st.session_state.filters_last = signature
+        st.session_state.filtered_df = df
+    else:
+        df = st.session_state.get("filtered_df", pd.DataFrame())
+
+    st.markdown("### خروجی فیلتر شده")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    if not df.empty:
+        st.download_button("دانلود CSV", df.to_csv(index=False).encode("utf-8-sig"), "filtered.csv", "text/csv")
+
+    # ---- Pivot-like chart from filtered rows (unchanged behaviour) ----
+    st.markdown("---")
+    st.subheader("نمودار از داده‌های فیلتر شده")
+
+    agg_dims_all = [
+        "سال","کد ژنریک","نام ژنریک","مولکول دارویی","نام تجاری فرآورده",
+        "شرکت تامین کننده","تولیدی/وارداتی","route","dosage form","atc code","Anatomical",
+    ]
+    agg_metric_all = ["ارزش ریالی", "قیمت", "تعداد تامین شده"]
+
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        agg_dim1 = st.selectbox("بعد اول (Dimension 1)", agg_dims_all, index=0, key="agg_dim1")
+    with cc2:
+        agg_dim2_sel = st.selectbox("بعد دوم (اختیاری)", ["— هیچ —"] + agg_dims_all, index=0, key="agg_dim2")
+        agg_dim2 = None if agg_dim2_sel == "— هیچ —" else agg_dim2_sel
+    with cc3:
+        agg_metric = st.selectbox("متریک (مجموع)", agg_metric_all, index=0, key="agg_metric")
+
+    if df.empty:
+        st.info("پس از اعمال فیلترها، داده‌ای برای تجمیع وجود ندارد.")
+    else:
+        missing = [c for c in [agg_dim1, agg_dim2, agg_metric] if c and c not in df.columns]
+        if missing:
+            st.warning(f"ستون‌های مورد نیاز در خروجی یافت نشد: {missing}")
+        else:
+            group_cols = [c for c in [agg_dim1, agg_dim2] if c]
+            try:
+                g = df.groupby(group_cols, dropna=False)[agg_metric].sum().reset_index()
+            except Exception:
+                tmp = df.copy()
+                for c in group_cols:
+                    tmp[c] = tmp[c].astype(str)
+                g = tmp.groupby(group_cols, dropna=False)[agg_metric].sum().reset_index()
+
+            label = g[agg_dim1].astype(str).fillna("")
+            if agg_dim2:
+                label = label + " — " + g[agg_dim2].astype(str).fillna("")
+            chart_df = pd.DataFrame({"label": label, "total_value": g[agg_metric]}).sort_values("total_value", ascending=False)
+            st.bar_chart(chart_df.set_index("label")[["total_value"]])
+            st.caption(f"ردیف‌های تجمیع‌شده: {len(g)}  |  ستون تجمیع: {agg_metric}")
+
 
     # ---- Run filtered query ----
     df = query_with_filters(
