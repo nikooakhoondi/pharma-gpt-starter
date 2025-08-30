@@ -245,14 +245,14 @@ def get_unique(col: str, limit: int = 20000):
         if years:     q = q.in_(COLS["سال"], years)
         if prod_type: q = q.in_(COLS["وارداتی/تولید داخل"], prod_type)
 
-        # ATC: exact has priority; otherwise prefix
-        if atc_exact:
-            q = q.in_(COLS["ATC code"], atc_exact)
-        elif atc_prefix.strip():
-            try:
-                q = q.ilike(COLS["ATC code"], atc_prefix.strip() + "%")
-            except Exception:
-                q = q.like(COLS["ATC code"], atc_prefix.strip() + "%")
+        # ATC: exact first; else prefix
+if atc_exact:
+    q = q.in_(COLS["ATC code"], atc_exact)
+elif atc_prefix.strip():
+    try:
+        q = q.ilike(COLS["ATC code"], atc_prefix.strip() + "%")
+    except Exception:
+        q = q.like(COLS["ATC code"], atc_prefix.strip() + "%")
 
         # Server-side order where available
         q = q.order(sort_by, desc=descending).limit(int(limit_rows))
