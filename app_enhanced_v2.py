@@ -391,23 +391,34 @@ with tab_table:
 # ============================ GPT DATA CHAT ============================
 with tab_chat:
     st.subheader("گفتگو با دیتابیس")
-    client = get_openai_client()
 
+    # 1) Get cached OpenAI client (from Patch 3.1)
+    client = get_openai_client()
     if not client:
         st.warning("OpenAI API key not found — data chat is disabled.")
     else:
-        
+        # 2) Safe session init
         if "data_chat" not in st.session_state:
             st.session_state.data_chat = []
 
+        # 3) Render history safely
         for msg in st.session_state.data_chat:
-            st.chat_message(msg["role"]).write(msg["content"])
+            role = msg.get("role", "assistant")
+            content = msg.get("content", "")
+            try:
+                st.chat_message(role).write(content)
+            except Exception:
+                # Never let a broken history item crash the app
+                st.chat_message("assistant").write("⚠️ پیام قبلی قابل نمایش نیست (خطای قالب).")
 
-        user_q = st.chat_input("مثلاً: سهم ارزش ریالی هر شرکت در سال‌های ۱۴۰۰ تا ۱۴۰۲؟")
+        # 4) Chat input
+        user_q = st.chat_input("مثلاً: سهم ارزش ریالی هر شرکت در سال‌های ۱۴۰۰ تا ۱۴۰۲؟", key="data_chat_input")
         if user_q:
+            # echo user
             st.chat_message("user").write(user_q)
             st.session_state.data_chat.append({"role": "user", "content": user_q})
 
+            # -------- Planner prompt (unchanged idea, made safer) --------
             guide = {"allowed_dims": ALLOWED_DIMS, "allowed_metrics": ALLOWED_METRICS, "allowed_filters": ALLOWED_DIMS}
             system_prompt = f"""
 You are a planner that outputs ONLY compact JSON (no prose). You control a data tool with:
@@ -431,29 +442,49 @@ OR
 {{"intent":"rows","filters":{{"ستون":"مقدار"}}, "limit": 200}}
 """.strip()
 
+            # 5) Ask model for a plan (supports both old & new SDKs)
+            plan = None
+            plan_error = None
             try:
-                plan_resp = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": system_prompt},
-                              {"role": "user", "content": user_q}],
-                    temperature=0,
-                )
-                plan_text = plan_resp.choices[0].message.content.strip()
+                # Try new Responses API first (some installs default to this)
+                try:
+                    resp = client.responses.create(
+                        model="gpt-4o-mini",
+                        input=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_q},
+                        ],
+                    )
+                    plan_text = (resp.output_text or "").strip()
+                except Exception:
+                    # Fallback to classic chat.completions API
+                    resp = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "system", "content": system_prompt},
+                                  {"role": "user", "content": user_q}],
+                        temperature=0,
+                    )
+                    plan_text = resp.choices[0].message.content.strip()
+
+                # Extract JSON robustly
                 start = plan_text.find("{")
                 end = plan_text.rfind("}")
                 if start == -1 or end == -1:
                     raise ValueError("No JSON plan returned.")
                 plan = json.loads(plan_text[start:end+1])
-            except Exception as e:
-                msg = f"⚠️ برنامه‌ریز نتوانست برنامه بدهد: {e}"
-                st.chat_message("assistant").write(msg)
-                st.session_state.data_chat.append({"role": "assistant", "content": msg})
-                plan = None
 
-            answer = None
-            if plan:
+            except Exception as e:
+                plan_error = f"⚠️ برنامه‌ریز نتوانست برنامه بدهد: {e}"
+
+            if plan_error:
+                st.chat_message("assistant").write(plan_error)
+                st.session_state.data_chat.append({"role": "assistant", "content": plan_error})
+            else:
+                # 6) Execute the plan safely and show results
+                answer = None
                 try:
-                    if plan.get("intent") == "pivot":
+                    intent = (plan.get("intent") or "").lower()
+                    if intent == "pivot":
                         d1 = plan.get("dim1")
                         d2 = plan.get("dim2")
                         metric = plan.get("metric", "ارزش ریالی")
@@ -461,6 +492,7 @@ OR
                         y2 = plan.get("year_to")
                         top_n = int(plan.get("top_n") or 20)
 
+                        # validate
                         if d1 not in ALLOWED_DIMS or d2 not in ALLOWED_DIMS:
                             raise ValueError("Invalid dimension(s).")
                         if metric not in ALLOWED_METRICS:
@@ -471,6 +503,7 @@ OR
                             "year_from": int(y1) if y1 else None,
                             "year_to": int(y2) if y2 else None
                         }).execute()
+
                         df_ans = pd.DataFrame(res.data or [])
                         if not df_ans.empty:
                             df_ans = df_ans.sort_values("total_value", ascending=False).head(top_n)
@@ -479,7 +512,7 @@ OR
                         else:
                             answer = "هیچ نتیجه‌ای برای این Pivot پیدا نشد."
 
-                    elif plan.get("intent") == "rows":
+                    elif intent == "rows":
                         filters = plan.get("filters") or {}
                         limit = int(plan.get("limit") or 200)
                         q = sb.table(TABLE).select("*")
@@ -499,14 +532,16 @@ OR
                             answer = f"{len(df_ans)} ردیف مطابق فیلترها نمایش داده شد (حداکثر {limit})."
                         else:
                             answer = "ردیفی مطابق شرایط پیدا نشد."
+
                     else:
                         answer = "جهت پاسخ نیاز است مشخص کنید Pivot می‌خواهید یا ردیف‌های خام."
 
                 except Exception as e:
                     answer = f"⚠️ اجرای برنامه شکست خورد: {e}"
 
-            if answer is None:
-                answer = "سوال را واضح‌تر بپرس یا مثال بده تا Pivot یا فیلتر مناسب بسازم."
+                # 7) Always render an assistant message (never None)
+                if not answer:
+                    answer = "سوال را واضح‌تر بپرس یا مثال بده تا Pivot یا فیلتر مناسب بسازم."
 
-            st.chat_message("assistant").write(answer)
-            st.session_state.data_chat.append({"role": "assistant", "content": answer})
+                st.chat_message("assistant").write(answer)
+                st.session_state.data_chat.append({"role": "assistant", "content": answer})
