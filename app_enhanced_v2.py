@@ -204,43 +204,13 @@ else:
         authenticator.logout("Logout", "sidebar")
 
 # ---------------------------- Tabs ----------------------------
-tab_pivot, tab_table, tab_chat = st.tabs(["📊 Pivot", "📋 Filter/Table", "💬 Chat"])
-
-# ============================ PIVOT ============================
-with tab_pivot:
-    c1, c2, c3 = st.columns(3)
-    dim1   = c1.selectbox("Dimension 1", ALLOWED_DIMS, index=0)
-    dim2   = c2.selectbox("Dimension 2", ALLOWED_DIMS, index=5)
-    metric = c3.selectbox("Metric (sum of)", ALLOWED_METRICS, index=0)
-    y1, y2 = st.slider("Year range (سال)", min_value=1390, max_value=1500, value=(1400, 1404))
-
-    df_pivot = run_pivot_rpc(dim1, dim2, metric, y1, y2)
-    st.caption(f"Returned {len(df_pivot)} aggregated rows.")
-    st.dataframe(df_pivot, use_container_width=True)
-
-    if not df_pivot.empty and "total_value" in df_pivot.columns:
-        parts = []
-        if "d1" in df_pivot.columns:
-            parts.append(df_pivot["d1"].astype(str))
-        if "d2" in df_pivot.columns:
-            parts.append(df_pivot["d2"].astype(str))
-        if parts:
-            label = parts[0].fillna("")
-            for s in parts[1:]:
-                label = label.str.cat(s.fillna(""), sep=" — ")
-        else:
-            label = pd.Series([f"row {i+1}" for i in range(len(df_pivot))])
-        chart_df = (
-            pd.DataFrame({"label": label, "total_value": df_pivot["total_value"]})
-            .sort_values("total_value", ascending=False)
-        )
-        st.bar_chart(chart_df.set_index("label")[["total_value"]])
-    else:
-        st.info("No 'total_value' returned from the RPC, so chart is skipped.")
+tab_table, tab_chat = st.tabs(["📋 Filter/Table", "💬 Chat"])
 
 # ============================ FILTER / TABLE ============================
 with tab_table:
     st.subheader("فیلترها")
+
+    # ---- Filter UI ----
     c1, c2 = st.columns(2)
     with c1:
         mols   = st.multiselect("مولکول دارویی", options=get_unique(COLS["مولکول دارویی"]))
@@ -268,13 +238,67 @@ with tab_table:
     with colC:
         limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
 
+    # ---- Run filtered query ----
     df = query_with_filters(
         mols, brands, forms, routes, provs, years, atc_exact, atc_prefix, prod_type,
         sort_by, descending, limit_rows
     )
+
     st.markdown("### خروجی فیلتر شده")
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.download_button("دانلود CSV", df.to_csv(index=False).encode("utf-8-sig"), "filtered.csv", "text/csv")
+
+    # ---- Aggregation & Chart (Pivot-like, computed client-side from filtered rows) ----
+    st.markdown("---")
+    st.subheader("نمودار از داده‌های فیلتر شده")
+
+    # Choose dimensions & metric for the chart (same idea as the old Pivot tab)
+    agg_dims_all = [
+        "سال","کد ژنریک","نام ژنریک","مولکول دارویی","نام تجاری فرآورده",
+        "شرکت تامین کننده","تولیدی/وارداتی","route","dosage form","atc code","Anatomical",
+    ]
+    agg_metric_all = ["ارزش ریالی", "قیمت", "تعداد تامین شده"]
+
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        agg_dim1 = st.selectbox("بعد اول (Dimension 1)", agg_dims_all, index=0)
+    with cc2:
+        agg_dim2 = st.selectbox("بعد دوم (اختیاری)", ["— هیچ —"] + agg_dims_all, index=0)
+        agg_dim2 = None if agg_dim2 == "— هیچ —" else agg_dim2
+    with cc3:
+        agg_metric = st.selectbox("متریک (مجموع)", agg_metric_all, index=0)
+
+    if df.empty:
+        st.info("پس از اعمال فیلترها، داده‌ای برای تجمیع وجود ندارد.")
+    else:
+        missing_cols = [c for c in [agg_dim1, agg_dim2, agg_metric] if c and c not in df.columns]
+        if missing_cols:
+            st.warning(f"ستون‌های مورد نیاز در خروجی یافت نشد: {missing_cols}")
+        else:
+            # Group & sum
+            group_cols = [c for c in [agg_dim1, agg_dim2] if c]
+            try:
+                g = df.groupby(group_cols, dropna=False)[agg_metric].sum().reset_index()
+            except Exception:
+                # In case types are mixed, coerce to string for grouping dims
+                tmp = df.copy()
+                for c in group_cols:
+                    tmp[c] = tmp[c].astype(str)
+                g = tmp.groupby(group_cols, dropna=False)[agg_metric].sum().reset_index()
+
+            # Build a label column similar to the previous pivot chart
+            if agg_dim2:
+                label = g[agg_dim1].astype(str).fillna("") + " — " + g[agg_dim2].astype(str).fillna("")
+            else:
+                label = g[agg_dim1].astype(str).fillna("")
+
+            chart_df = (
+                pd.DataFrame({"label": label, "total_value": g[agg_metric]})
+                .sort_values("total_value", ascending=False)
+            )
+
+            st.bar_chart(chart_df.set_index("label")[["total_value"]])
+            st.caption(f"ردیف‌های تجمیع‌شده: {len(g)}  |  ستون تجمیع: {agg_metric}")
 
 # ============================ GPT DATA CHAT ============================
 with tab_chat:
