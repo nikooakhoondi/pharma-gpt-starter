@@ -482,7 +482,8 @@ OR
                 st.chat_message("assistant").write(plan_error)
                 st.session_state.data_chat.append({"role": "assistant", "content": plan_error})
             else:
-                            # 6) Execute the plan safely and show results
+                          
+                # 6) Execute the plan safely and show results
             answer = None
             try:
                 intent = (plan.get("intent") or "").lower()
