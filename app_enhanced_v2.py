@@ -56,6 +56,14 @@ sb = get_supabase()
 if sb is None:
     st.stop()
 
+# ---------------------------- Cached OpenAI client ----------------------------
+@st.cache_resource
+def get_openai_client():
+    key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not key:
+        return None
+    return OpenAI(api_key=key)
+
 TABLE = "Amarname_sheet1"  # keep exactly as user requested
 
 # ---------------------------- Shared constants ----------------------------
@@ -109,7 +117,7 @@ def run_pivot_rpc(dim1: str, dim2: str, metric: str, y1: int, y2: int) -> pd.Dat
         st.error(f"Supabase RPC failed: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)  # cache 30 minutes
 def get_unique(col: str, limit: int = 20000):
     """
     Ultra-robust distinct fetch for problematic column names (spaces, slashes, non-ASCII).
@@ -136,7 +144,7 @@ def get_unique(col: str, limit: int = 20000):
     except TypeError:
         return sorted({str(v) for v in vals})
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def query_with_filters(
     mols, brands, forms, routes, provs, years, atc_exact, atc_prefix, prod_type,
     sort_by, descending, limit_rows
@@ -206,7 +214,6 @@ else:
 # ---------------------------- Tabs ----------------------------
 tab_table, tab_chat = st.tabs(["📋 Filter/Table", "💬 Chat"])
 
-# ============================ FILTER / TABLE ============================
 # ============================ FILTER / TABLE ============================
 with tab_table:
     st.subheader("فیلترها")
@@ -383,14 +390,13 @@ with tab_table:
 
 # ============================ GPT DATA CHAT ============================
 with tab_chat:
-    API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     st.subheader("گفتگو با دیتابیس")
+    client = get_openai_client()
 
-    if not API_KEY:
+    if not client:
         st.warning("OpenAI API key not found — data chat is disabled.")
     else:
-        client = OpenAI(api_key=API_KEY)
-
+        
         if "data_chat" not in st.session_state:
             st.session_state.data_chat = []
 
