@@ -1,4 +1,4 @@
-# app_enhanced_v2.py — Supabase-only, friendly preface + robust filters, Pivot, and Data Chat
+# app_enhanced_v2.py — Supabase-only: Pivot + Filter/Table + GPT Chat
 from typing import Optional
 import os, json
 import pandas as pd
@@ -7,16 +7,11 @@ import streamlit_authenticator as stauth
 from supabase import create_client, Client
 from openai import OpenAI
 
-# -----------------------------------------------------------
-# Page config
-# -----------------------------------------------------------
-st.set_page_config(page_title="Pharma-GPT (v2)", layout="wide")
+# ---------------------------- Page config ----------------------------
+st.set_page_config(page_title="Pharma-GPT (Supabase)", layout="wide")
 
-# -----------------------------------------------------------
-# --- LOGIN (username/password) ---
-# -----------------------------------------------------------
+# ---------------------------- Auth ----------------------------
 def do_login(authenticator):
-    # Try multiple signatures for compatibility with different versions
     try:
         return authenticator.login(location="main")
     except TypeError:
@@ -49,7 +44,6 @@ def _build_authenticator_from_secrets():
 
 authenticator = _build_authenticator_from_secrets()
 name, auth_status, username = do_login(authenticator)
-
 if not auth_status:
     if auth_status is False:
         st.error("Incorrect username or password")
@@ -62,9 +56,7 @@ else:
     except TypeError:
         authenticator.logout("Logout", "sidebar")
 
-# -----------------------------------------------------------
-# Supabase connection
-# -----------------------------------------------------------
+# ---------------------------- Supabase ----------------------------
 @st.cache_resource
 def get_supabase() -> Optional[Client]:
     url = st.secrets.get("SUPABASE_URL")
@@ -78,11 +70,9 @@ sb = get_supabase()
 if sb is None:
     st.stop()
 
-TABLE = "Amarname_sheet1"  # ← your table name (do not change)
+TABLE = "Amarname_sheet1"  # ← keep exactly as you asked
 
-# -----------------------------------------------------------
-# Friendly Preface (concise)
-# -----------------------------------------------------------
+# ---------------------------- Preface ----------------------------
 st.title("💊 Pharma-GPT")
 st.caption("Pivot like Excel — or ask in natural language. Results come from your Supabase table: Amarname_sheet1.")
 
@@ -98,14 +88,10 @@ with st.expander("راهنمای سریع / Quick Start", expanded=True):
 """
     )
 
-# -----------------------------------------------------------
-# Tabs
-# -----------------------------------------------------------
+# ---------------------------- Tabs ----------------------------
 tab_pivot, tab_table, tab_chat = st.tabs(["📊 Pivot", "📋 Filter/Table", "💬 Chat"])
 
-# -----------------------------------------------------------
-# PIVOT (server-side RPC)
-# -----------------------------------------------------------
+# ============================ PIVOT ============================
 with tab_pivot:
     allowed_dims = [
         "سال","کد ژنریک","نام ژنریک","مولکول دارویی","نام تجاری فرآورده",
@@ -137,7 +123,6 @@ with tab_pivot:
     st.dataframe(df_pivot, use_container_width=True)  # expected: d1, d2, total_value, rows
 
     if not df_pivot.empty and "total_value" in df_pivot.columns:
-        # Build a label column (d1 — d2) and plot
         parts = []
         if "d1" in df_pivot.columns: parts.append(df_pivot["d1"].astype(str))
         if "d2" in df_pivot.columns: parts.append(df_pivot["d2"].astype(str))
@@ -152,11 +137,8 @@ with tab_pivot:
     else:
         st.info("No 'total_value' column returned from the RPC, so chart is skipped.")
 
-# -----------------------------------------------------------
-# FILTER/TABLE VIEW (searchable dropdowns)
-# -----------------------------------------------------------
+# ============================ FILTER / TABLE ============================
 with tab_table:
-    # Map Persian labels → actual column names in your table
     COLS = {
         "مولکول دارویی": "مولکول دارویی",
         "نام برند": "نام تجاری فرآورده",
@@ -166,39 +148,38 @@ with tab_table:
         "سال": "سال",
         "ATC code": "atc code",
         "وارداتی/تولید داخل": "تولیدی/وارداتی",
-        # for sorting/visible extras
+        # for sorting
         "ارزش ریالی": "ارزش ریالی",
         "تعداد تامین شده": "تعداد تامین شده",
         "قیمت": "قیمت",
     }
 
     @st.cache_data(ttl=600)
-def get_unique(col: str, limit: int = 20000):
-    """
-    Ultra-robust distinct fetch for problematic column names (spaces, slashes, non-ASCII).
-    Strategy: pull a small page with select("*") then dedupe client-side.
-    """
-    try:
-        r = sb.table(TABLE).select("*").limit(limit).execute()
-    except Exception as e:
-        st.error(f"Supabase select failed for uniques on '{col}': {e}")
-        return []
+    def get_unique(col: str, limit: int = 20000):
+        """
+        Ultra-robust distinct fetch for problematic column names (spaces, slashes, non-ASCII).
+        Strategy: pull a small page with select("*") then dedupe client-side.
+        """
+        try:
+            r = sb.table(TABLE).select("*").limit(limit).execute()
+        except Exception as e:
+            st.error(f"Supabase select failed for uniques on '{col}': {e}")
+            return []
 
-    data = r.data or []
-    vals = []
-    for row in data:
-        v = row.get(col)
-        if v is None:
-            continue
-        if isinstance(v, str) and v.strip() == "":
-            continue
-        vals.append(v)
+        data = r.data or []
+        vals = []
+        for row in data:
+            v = row.get(col)
+            if v is None:
+                continue
+            if isinstance(v, str) and v.strip() == "":
+                continue
+            vals.append(v)
 
-    # unique + sorted (handle mixed types)
-    try:
-        return sorted(set(vals))
-    except TypeError:
-        return sorted({str(v) for v in vals})
+        try:
+            return sorted(set(vals))
+        except TypeError:
+            return sorted({str(v) for v in vals})
 
     st.subheader("فیلترها")
     c1, c2 = st.columns(2)
@@ -246,15 +227,14 @@ def get_unique(col: str, limit: int = 20000):
         if prod_type: q = q.in_(COLS["وارداتی/تولید داخل"], prod_type)
 
         # ATC: exact first; else prefix
-if atc_exact:
-    q = q.in_(COLS["ATC code"], atc_exact)
-elif atc_prefix.strip():
-    try:
-        q = q.ilike(COLS["ATC code"], atc_prefix.strip() + "%")
-    except Exception:
-        q = q.like(COLS["ATC code"], atc_prefix.strip() + "%")
+        if atc_exact:
+            q = q.in_(COLS["ATC code"], atc_exact)
+        elif atc_prefix.strip():
+            try:
+                q = q.ilike(COLS["ATC code"], atc_prefix.strip() + "%")
+            except Exception:
+                q = q.like(COLS["ATC code"], atc_prefix.strip() + "%")
 
-        # Server-side order where available
         q = q.order(sort_by, desc=descending).limit(int(limit_rows))
         res = q.execute()
         df = pd.DataFrame(res.data or [])
@@ -270,9 +250,7 @@ elif atc_prefix.strip():
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.download_button("دانلود CSV", df.to_csv(index=False).encode("utf-8-sig"), "filtered.csv", "text/csv")
 
-# -----------------------------------------------------------
-# DATA-AWARE CHAT (Persian/English)
-# -----------------------------------------------------------
+# ============================ GPT DATA CHAT ============================
 with tab_chat:
     API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     st.subheader("گفتگو با دیتابیس")
@@ -319,8 +297,8 @@ with tab_chat:
 
             system_prompt = f"""
 You are a planner that outputs ONLY compact JSON (no prose). You control a data tool with:
-- pivot(dim1, dim2, metric, year_from, year_to)
-- rows(filters, limit)
+- pivot(dim1, dim2, metric, year_from, year_to)  # both dims must be from allowed_dims; metric from allowed_metrics
+- rows(filters, limit)  # filters is an object of column -> value OR list of values; only columns in allowed_filters
 
 Rules:
 - Use Persian or English inputs.
@@ -361,19 +339,18 @@ OR
             if plan:
                 try:
                     if plan.get("intent") == "pivot":
-                        dim1 = plan.get("dim1")
-                        dim2 = plan.get("dim2")
+                        d1 = plan.get("dim1"); d2 = plan.get("dim2")
                         metric = plan.get("metric", "ارزش ریالی")
                         y1 = plan.get("year_from"); y2 = plan.get("year_to")
                         top_n = int(plan.get("top_n") or 20)
 
-                        if dim1 not in allowed_dims or dim2 not in allowed_dims:
+                        if d1 not in allowed_dims or d2 not in allowed_dims:
                             raise ValueError("Invalid dimension(s).")
                         if metric not in allowed_metrics:
                             raise ValueError("Invalid metric.")
 
                         res = sb.rpc("pivot_2d_numeric", {
-                            "dim1": dim1, "dim2": dim2, "metric": metric,
+                            "dim1": d1, "dim2": d2, "metric": metric,
                             "year_from": int(y1) if y1 else None,
                             "year_to": int(y2) if y2 else None
                         }).execute()
@@ -381,7 +358,7 @@ OR
                         if not df_ans.empty:
                             df_ans = df_ans.sort_values("total_value", ascending=False).head(top_n)
                             st.dataframe(df_ans, use_container_width=True)
-                            answer = f"نتیجه‌ی Pivot برای «{dim1} × {dim2}» روی «{metric}»" + (f" در بازه‌ی {y1}-{y2}" if y1 and y2 else "") + f" (Top {top_n})."
+                            answer = f"نتیجه‌ی Pivot برای «{d1} × {d2}» روی «{metric}»" + (f" در بازه‌ی {y1}-{y2}" if y1 and y2 else "") + f" (Top {top_n})."
                         else:
                             answer = "هیچ نتیجه‌ای برای این Pivot پیدا نشد."
 
