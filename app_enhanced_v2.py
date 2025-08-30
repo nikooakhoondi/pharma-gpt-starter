@@ -442,48 +442,99 @@ OR
 {{"intent":"rows","filters":{{"ستون":"مقدار"}}, "limit": 200}}
 """.strip()
 
-                        # 5) Ask model for a plan (supports both old & new SDKs)
-            plan = None
-            plan_error = None
+            # 6) Execute the plan safely and show results
+            answer = None
             try:
-                # Try new Responses API first (some installs default to this)
-                try:
-                    resp = client.responses.create(
-                        model="gpt-4o-mini",
-                        input=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_q},
-                        ],
-                    )
-                    plan_text = (resp.output_text or "").strip()
-                except Exception:
-                    # Fallback to classic chat.completions API
-                    resp = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_q}
-                        ],
-                        temperature=0,
-                    )
-                    plan_text = resp.choices[0].message.content.strip()
+                intent = (plan.get("intent") or "").lower()
 
-                # Extract JSON robustly
-                start = plan_text.find("{")
-                end = plan_text.rfind("}")
-                if start == -1 or end == -1:
-                    raise ValueError("No JSON plan returned.")
-                plan = json.loads(plan_text[start:end+1])
+                if intent == "pivot":
+                    d1 = plan.get("dim1")
+                    d2 = plan.get("dim2")
+                    metric = plan.get("metric", "ارزش ریالی")
+                    y1 = plan.get("year_from")
+                    y2 = plan.get("year_to")
+                    top_n = int(plan.get("top_n") or 20)
+
+                    # validate
+                    if d1 not in ALLOWED_DIMS or d2 not in ALLOWED_DIMS:
+                        raise ValueError("Invalid dimension(s).")
+                    if metric not in ALLOWED_METRICS:
+                        raise ValueError("Invalid metric.")
+
+                    # default year range if missing
+                    if not y1 or not y2:
+                        try:
+                            yr_min = sb.table(TABLE).select("سال").order("سال").limit(1).execute()
+                            min_year = int(yr_min.data[0]["سال"]) if yr_min.data else 1300
+                            yr_max = sb.table(TABLE).select("سال").order("سال", desc=True).limit(1).execute()
+                            max_year = int(yr_max.data[0]["سال"]) if yr_max.data else 1500
+                        except Exception:
+                            min_year, max_year = 1300, 1500
+                        y1 = int(y1) if y1 else min_year
+                        y2 = int(y2) if y2 else max_year
+
+                    # RPC
+                    res = sb.rpc(
+                        "pivot_2d_numeric",
+                        {"dim1": d1, "dim2": d2, "metric": metric, "year_from": int(y1), "year_to": int(y2)}
+                    ).execute()
+
+                    df_ans = pd.DataFrame(res.data or [])
+                    if not df_ans.empty:
+                        # show table
+                        df_ans = df_ans.sort_values("total_value", ascending=False).head(top_n)
+                        st.dataframe(df_ans, use_container_width=True)
+
+                        # quick bar chart
+                        parts = []
+                        if "d1" in df_ans.columns:
+                            parts.append(df_ans["d1"].astype(str))
+                        if "d2" in df_ans.columns:
+                            parts.append(df_ans["d2"].astype(str))
+                        if parts:
+                            label = parts[0].fillna("")
+                            for s in parts[1:]:
+                                label = label.str.cat(s.fillna(""), sep=" — ")
+                        else:
+                            label = pd.Series([f"row {i+1}" for i in range(len(df_ans))])
+                        chart_df = pd.DataFrame({"label": label, "total_value": df_ans["total_value"]}).sort_values("total_value", ascending=False)
+                        st.bar_chart(chart_df.set_index("label")[["total_value"]])
+
+                        answer = f"Pivot «{d1} × {d2}» روی «{metric}» در بازهٔ {y1}–{y2} (Top {top_n})."
+                    else:
+                        answer = f"هیچ نتیجه‌ای برای Pivot «{d1} × {d2}» روی «{metric}» در بازهٔ {y1}–{y2} پیدا نشد."
+
+                elif intent == "rows":
+                    filters = plan.get("filters") or {}
+                    limit = int(plan.get("limit") or 200)
+
+                    q = sb.table(TABLE).select("*")
+                    for col, val in filters.items():
+                        col = SYNONYMS.get(col, col)
+                        if col not in ALLOWED_DIMS:
+                            continue
+                        if isinstance(val, list):
+                            q = q.in_(col, val)
+                        else:
+                            q = q.eq(col, val)
+                    q = q.limit(limit)
+
+                    res = q.execute()
+                    df_ans = pd.DataFrame(res.data or [])
+                    if not df_ans.empty:
+                        st.dataframe(df_ans, use_container_width=True)
+                        answer = f"{len(df_ans)} ردیف مطابق فیلترها نمایش داده شد (حداکثر {limit})."
+                    else:
+                        answer = "ردیفی مطابق شرایط پیدا نشد."
+
+                else:
+                    answer = "جهت پاسخ نیاز است مشخص کنید Pivot می‌خواهید یا ردیف‌های خام."
 
             except Exception as e:
-                plan_error = f"⚠️ برنامه‌ریز نتوانست برنامه بدهد: {e}"
+                # <-- this 'except' closes the outer try and fixes the SyntaxError
+                answer = f"⚠️ اجرای برنامه شکست خورد: {e}"
 
-            if plan_error:
-                st.chat_message("assistant").write(plan_error)
-                st.session_state.data_chat.append({"role": "assistant", "content": plan_error})
-            else:
-                          
-                # 6) Execute the plan safely and show results
+                         # 6) Execute the plan safely and show results
             answer = None
             try:
                 intent = (plan.get("intent") or "").lower()
