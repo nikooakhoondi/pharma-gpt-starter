@@ -173,34 +173,32 @@ with tab_table:
     }
 
     @st.cache_data(ttl=600)
-    def get_unique(col: str, limit: int = 50000):
-        """
-        Robust distinct fetch:
-        - Avoids server-side NOT/IS filters that can fail with non-ASCII/spacey columns.
-        - Orders then dedupes client-side.
-        """
-        try:
-            r = sb.table(TABLE).select(col).order(col).limit(limit).execute()
-        except Exception:
-            # Fallback: quoted column if PostgREST complains
-            quoted = f'"{col}"'
-            r = sb.table(TABLE).select(quoted).order(col).limit(limit).execute()
+def get_unique(col: str, limit: int = 20000):
+    """
+    Ultra-robust distinct fetch for problematic column names (spaces, slashes, non-ASCII).
+    Strategy: pull a small page with select("*") then dedupe client-side.
+    """
+    try:
+        r = sb.table(TABLE).select("*").limit(limit).execute()
+    except Exception as e:
+        st.error(f"Supabase select failed for uniques on '{col}': {e}")
+        return []
 
-        data = r.data or []
-        vals = []
-        for row in data:
-            v = row.get(col)
-            if v is None:
-                continue
-            if isinstance(v, str) and v.strip() == "":
-                continue
-            vals.append(v)
+    data = r.data or []
+    vals = []
+    for row in data:
+        v = row.get(col)
+        if v is None:
+            continue
+        if isinstance(v, str) and v.strip() == "":
+            continue
+        vals.append(v)
 
-        try:
-            return sorted(set(vals))
-        except TypeError:
-            # Mixed types: ensure sortability
-            return sorted({str(v) for v in vals})
+    # unique + sorted (handle mixed types)
+    try:
+        return sorted(set(vals))
+    except TypeError:
+        return sorted({str(v) for v in vals})
 
     st.subheader("فیلترها")
     c1, c2 = st.columns(2)
