@@ -105,37 +105,45 @@ with tab_pivot:
     metric = c3.selectbox("Metric (sum of)", metrics, index=0)
     y1, y2 = st.slider("Year range (سال)", min_value=1390, max_value=1500, value=(1400, 1404))
 
-    @st.cache_data(ttl=300)
-    def run_pivot(dim1: str, dim2: str, metric: str, y1: int, y2: int) -> pd.DataFrame:
+   @st.cache_data(ttl=300)
+def query_with_filters(
+    mols, brands, forms, routes, provs, years, atc_exact, atc_prefix, prod_type,
+    sort_by, descending, limit_rows
+):
+    q = sb.table(TABLE).select("*")
+
+    if mols:      q = q.in_(COLS["مولکول دارویی"], mols)
+    if brands:    q = q.in_(COLS["نام برند"], brands)
+    if forms:     q = q.in_(COLS["شکل دارویی"], forms)
+    if routes:    q = q.in_(COLS["طریقه مصرف"], routes)
+    if provs:     q = q.in_(COLS["نام تامین کننده"], provs)
+    if years:     q = q.in_(COLS["سال"], years)
+    if prod_type: q = q.in_(COLS["وارداتی/تولید داخل"], prod_type)
+
+    # ATC: exact first; else prefix
+    if atc_exact:
+        q = q.in_(COLS["ATC code"], atc_exact)
+    elif atc_prefix.strip():
         try:
-            res = sb.rpc(
-                "pivot_2d_numeric",
-                {"dim1": dim1, "dim2": dim2, "metric": metric,
-                 "year_from": int(y1), "year_to": int(y2)}
-            ).execute()
-            return pd.DataFrame(res.data or [])
-        except Exception as e:
-            st.error(f"Supabase RPC failed: {e}")
-            return pd.DataFrame()
+            q = q.ilike(COLS["ATC code"], atc_prefix.strip() + "%")
+        except Exception:
+            q = q.like(COLS["ATC code"], atc_prefix.strip() + "%")
 
-    df_pivot = run_pivot(dim1, dim2, metric, y1, y2)
-    st.caption(f"Returned {len(df_pivot)} aggregated rows.")
-    st.dataframe(df_pivot, use_container_width=True)  # expected: d1, d2, total_value, rows
+    # ⚠️ Avoid server-side order() because of non-ASCII / spaced column names → do it client-side
+    try:
+        res = q.limit(int(limit_rows)).execute()
+    except Exception as e:
+        # last-resort fallback (no filters changed)
+        st.error(f"Supabase query failed: {e}")
+        return pd.DataFrame()
 
-    if not df_pivot.empty and "total_value" in df_pivot.columns:
-        parts = []
-        if "d1" in df_pivot.columns: parts.append(df_pivot["d1"].astype(str))
-        if "d2" in df_pivot.columns: parts.append(df_pivot["d2"].astype(str))
-        if parts:
-            label = parts[0].fillna("")
-            for s in parts[1:]:
-                label = label.str.cat(s.fillna(""), sep=" — ")
-        else:
-            label = pd.Series([f"row {i+1}" for i in range(len(df_pivot))])
-        chart_df = pd.DataFrame({"label": label, "total_value": df_pivot["total_value"]}).sort_values("total_value", ascending=False)
-        st.bar_chart(chart_df.set_index("label")[["total_value"]])
-    else:
-        st.info("No 'total_value' column returned from the RPC, so chart is skipped.")
+    df = pd.DataFrame(res.data or [])
+
+    # Client-side sort (safe for any column name)
+    if not df.empty and sort_by in df.columns:
+        df = df.sort_values(sort_by, ascending=not descending, kind="mergesort")
+
+    return df
 
 # ============================ FILTER / TABLE ============================
 with tab_table:
