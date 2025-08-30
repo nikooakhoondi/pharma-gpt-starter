@@ -442,7 +442,7 @@ OR
 {{"intent":"rows","filters":{{"ستون":"مقدار"}}, "limit": 200}}
 """.strip()
 
-            # 5) Ask model for a plan (supports both old & new SDKs)
+                        # 5) Ask model for a plan (supports both old & new SDKs)
             plan = None
             plan_error = None
             try:
@@ -460,8 +460,10 @@ OR
                     # Fallback to classic chat.completions API
                     resp = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": system_prompt},
-                                  {"role": "user", "content": user_q}],
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_q}
+                        ],
                         temperature=0,
                     )
                     plan_text = resp.choices[0].message.content.strip()
@@ -485,39 +487,73 @@ OR
                 try:
                     intent = (plan.get("intent") or "").lower()
                     if intent == "pivot":
-                    d1 = plan.get("dim1")
-                    d2 = plan.get("dim2")
-                    metric = plan.get("metric", "ارزش ریالی")
-                    y1 = plan.get("year_from")
-                    y2 = plan.get("year_to")
-                    top_n = int(plan.get("top_n") or 20)
+                        d1 = plan.get("dim1")
+                        d2 = plan.get("dim2")
+                        metric = plan.get("metric", "ارزش ریالی")
+                        y1 = plan.get("year_from")
+                        y2 = plan.get("year_to")
+                        top_n = int(plan.get("top_n") or 20)
 
-                    # ---- validate dims/metric
-                    if d1 not in ALLOWED_DIMS or d2 not in ALLOWED_DIMS:
-                    raise ValueError("Invalid dimension(s).")
-                    if metric not in ALLOWED_METRICS:
-                    raise ValueError("Invalid metric.")
+                        # ---- validate dims/metric
+                        if d1 not in ALLOWED_DIMS or d2 not in ALLOWED_DIMS:
+                            raise ValueError("Invalid dimension(s).")
+                        if metric not in ALLOWED_METRICS:
+                            raise ValueError("Invalid metric.")
 
-                    # ---- if year range is missing, default to table min/max
-                    if not y1 or not y2:
-               try:
-                    # get min year
-                    yr_min = sb.table(TABLE).select("سال").order("سال").limit(1).execute()
-                    min_year = yr_min.data[0]["سال"] if yr_min.data else 1300
-                    # get max year
-                    yr_max = sb.table(TABLE).select("سال").order("سال", desc=True).limit(1).execute()
-                    max_year = yr_max.data[0]["سال"] if yr_max.data else 1500
-                    except Exception:
-                    # sensible fallback if anything fails
-                    min_year, max_year = 1300, 1500
-                    y1 = int(y1) if y1 else int(min_year)
-                    y2 = int(y2) if y2 else int(max_year)
+                        # ---- if year range is missing, default to table min/max
+                        if not y1 or not y2:
+                            try:
+                                # get min year
+                                yr_min = sb.table(TABLE).select("سال").order("سال").limit(1).execute()
+                                min_year = yr_min.data[0]["سال"] if yr_min.data else 1300
+                                # get max year
+                                yr_max = sb.table(TABLE).select("سال").order("سال", desc=True).limit(1).execute()
+                                max_year = yr_max.data[0]["سال"] if yr_max.data else 1500
+                            except Exception:
+                                # sensible fallback if anything fails
+                                min_year, max_year = 1300, 1500
+                            y1 = int(y1) if y1 else int(min_year)
+                            y2 = int(y2) if y2 else int(max_year)
 
-                   # ---- call RPC with guaranteed ints
-                   res = sb.rpc("pivot_2d_numeric", {
-                   "dim1": d1, "dim2": d2, "metric": metric,
-                   "year_from": int(y1), "year_to": int(y2)
-                   }).execute()
+                        # ---- call RPC with guaranteed ints
+                        res = sb.rpc(
+                            "pivot_2d_numeric",
+                            {
+                                "dim1": d1,
+                                "dim2": d2,
+                                "metric": metric,
+                                "year_from": int(y1),
+                                "year_to": int(y2)
+                            }
+                        ).execute()
+
+        df_ans = pd.DataFrame(res.data or [])
+        if not df_ans.empty:
+            df_ans = df_ans.sort_values("total_value", ascending=False).head(top_n)
+            st.dataframe(df_ans, use_container_width=True)
+
+            # bar chart labels from d1/d2
+            parts = []
+            if "d1" in df_ans.columns:
+                parts.append(df_ans["d1"].astype(str))
+            if "d2" in df_ans.columns:
+                parts.append(df_ans["d2"].astype(str))
+
+            if parts:
+                label = parts[0].fillna("")
+                for s in parts[1:]:
+                    label = label.str.cat(s.fillna(""), sep=" — ")
+            else:
+                label = pd.Series([f"row {i+1}" for i in range(len(df_ans))])
+
+            chart_df = pd.DataFrame(
+                {"label": label, "total_value": df_ans["total_value"]}
+            ).sort_values("total_value", ascending=False)
+            st.bar_chart(chart_df.set_index("label")[["total_value"]])
+
+            answer = f"Pivot «{d1} × {d2}» روی «{metric}» در بازهٔ {y1}–{y2} (Top {top_n})."
+        else:
+            answer = f"هیچ نتیجه‌ای برای Pivot «{d1} × {d2}» روی «{metric}» در بازهٔ {y1}–{y2} پیدا نشد."
 
     df_ans = pd.DataFrame(res.data or [])
     if not df_ans.empty:
