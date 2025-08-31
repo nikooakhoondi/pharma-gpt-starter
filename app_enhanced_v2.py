@@ -449,7 +449,7 @@ with st.form("filters_form", clear_on_submit=False):
     with colC:
         limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
 
-    # ✅ Submit button MUST be inside the form
+    # ✅ Submit button MUST be inside this form block
     applied = st.form_submit_button("اعمال فیلترها")
 
 
