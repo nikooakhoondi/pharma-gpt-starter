@@ -230,7 +230,7 @@ def query_with_filters(
     if years:     q = q.in_(COLS["سال"], years)
     if prod_type: q = q.in_(COLS["وارداتی/تولید داخل"], prod_type)
 
-    # ATC: exact first; else prefix
+        # ATC: exact first; else prefix
     if atc_exact:
         q = q.in_(COLS["ATC code"], atc_exact)
     elif atc_prefix and atc_prefix.strip():
@@ -247,24 +247,20 @@ def query_with_filters(
         return pd.DataFrame()
 
     df = pd.DataFrame(res.data or [])
+
     # Normalize year values (handles Persian digits / whitespace)
-if not df.empty and "سال" in df.columns:
-    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
-    df["سال"] = (
-        df["سال"].astype(str).str.translate(trans).str.strip()
-        .str.extract(r"(\d+)")[0].astype("Int64")
-    )
+    if not df.empty and "سال" in df.columns:
+        trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+        df["سال"] = (
+            df["سال"].astype(str).str.translate(trans).str.strip()
+            .str.extract(r"(\d+)")[0].astype("Int64")
+        )
 
     if not df.empty and sort_by in df.columns:
         df = df.sort_values(sort_by, ascending=not descending, kind="mergesort")
-return df
 
-@st.cache_data(ttl=600)
-def get_facet_options(target_nice: str, selections: dict, page_size: int = 5000):
-    """
-    Return options for ONE filter (target_nice) limited by all *other* selected filters.
-    Example: options for 'نام تامین کننده' when 'مولکول دارویی' = ['Metronidazole'].
-    """
+    return df
+
     # Map nice name → actual column
     COLS = {
         "مولکول دارویی": "مولکول دارویی",
