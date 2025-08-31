@@ -222,13 +222,13 @@ with tab_table:
     with st.form("filters_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
-            mols   = st.multiselect("مولکول دارویی", options=get_unique(COLS["مولکول دارویی"]))
+            mols = st.multiselect("مولکول دارویی", options=get_unique(COLS["مولکول دارویی"]))
             brands = st.multiselect("نام برند", options=get_unique(COLS["نام برند"]))
-            forms  = st.multiselect("شکل دارویی", options=get_unique(COLS["شکل دارویی"]))
+            forms = st.multiselect("شکل دارویی", options=get_unique(COLS["شکل دارویی"]))
             routes = st.multiselect("طریقه مصرف", options=get_unique(COLS["طریقه مصرف"]))
         with c2:
-            provs  = st.multiselect("نام تامین کننده", options=get_unique(COLS["نام تامین کننده"]))
-            years  = st.multiselect("سال", options=get_unique(COLS["سال"]))
+            provs = st.multiselect("نام تامین کننده", options=get_unique(COLS["نام تامین کننده"]))
+            years = st.multiselect("سال", options=get_unique(COLS["سال"]))
             atc_exact = st.multiselect("ATC code (Exact)", options=get_unique(COLS["ATC code"]))
             atc_prefix = st.text_input("فیلتر ATC بر اساس پیشوند (مثل N06A)", value="")
 
@@ -276,12 +276,12 @@ with tab_table:
     st.dataframe(df, use_container_width=True, hide_index=True)
     if not df.empty:
         st.download_button(
-    label="دانلود CSV",
-    data=df.to_csv(index=False).encode("utf-8-sig"),
-    file_name="filtered.csv",
-    mime="text/csv",
-    key="download_csv_filtered"  # 👈 unique key avoids DuplicateWidgetID
-)
+            label="دانلود CSV",
+            data=df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="filtered.csv",
+            mime="text/csv",
+            key="download_csv_filtered"  # 👈 unique key avoids DuplicateWidgetID
+        )
 
     # ---- Pivot-like chart from filtered rows (unchanged behaviour) ----
     st.markdown("---")
@@ -387,6 +387,7 @@ with tab_table:
 
             st.bar_chart(chart_df.set_index("label")[["total_value"]])
             st.caption(f"ردیف‌های تجمیع‌شده: {len(g)}  |  ستون تجمیع: {agg_metric}")
+
 
 # ============================ GPT DATA CHAT ============================
 with tab_chat:
