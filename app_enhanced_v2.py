@@ -144,48 +144,65 @@ def run_pivot_rpc(dim1: str, dim2: str, metric: str, y1: int, y2: int) -> pd.Dat
         st.error(f"Supabase RPC failed: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
-def get_unique(col: str, page_size: int = 1000):
-    """Read the WHOLE table in pages and dedupe."""
-    vals = set()
+@st.cache_data(ttl=1800)
+def load_all_uniques(page_size: int = 5000):
+    """
+    Load ALL distinct values for ALL filter columns in ONE scan over the table.
+    Much faster and complete.
+    """
+    cols = {
+        "مولکول دارویی": "مولکول دارویی",
+        "نام برند": "نام تجاری فرآورده",
+        "شکل دارویی": "dosage form",
+        "طریقه مصرف": "route",
+        "نام تامین کننده": "شرکت تامین کننده",
+        "سال": "سال",
+        "ATC code": "atc code",
+        "وارداتی/تولید داخل": "تولیدی/وارداتی",
+    }
 
-    def quote_col(c: str) -> str:
-        # Quote Farsi / spaced names so Supabase understands them
+    def q(c: str) -> str:
         try:
             simple = c.isascii() and c.replace("_", "").isalnum()
         except Exception:
             simple = False
         return c if simple else f'"{c}"'
 
-    sel = quote_col(col)
+    select_list = ",".join([q(v) for v in cols.values()])
+
+    sets = {k: set() for k in cols.keys()}
     start = 0
-    safety_loops = 0
+    safety_pages = 0
 
     while True:
         end = start + page_size - 1
-        r = sb.table(TABLE).select(sel).range(start, end).execute()
+        r = sb.table(TABLE).select(select_list).range(start, end).execute()
         rows = r.data or []
         if not rows:
             break
 
-        for row in rows:
-            v = row.get(col)
-            if v is None:
-                continue
-            if isinstance(v, str) and not v.strip():
-                continue
-            vals.add(v)
+        for rec in rows:
+            for nice, actual in cols.items():
+                v = rec.get(actual)
+                if v is None:
+                    continue
+                if isinstance(v, str) and not v.strip():
+                    continue
+                sets[nice].add(v)
 
-        # IMPORTANT: move forward by how many we actually received (handles server caps like 1000)
-        start += len(rows)
-        safety_loops += 1
-        if safety_loops > 10000:  # hard safety
+        got = len(rows)
+        start += got
+        safety_pages += 1
+        if got < page_size or safety_pages > 5000:
             break
 
-    try:
-        return sorted(vals)
-    except TypeError:
-        return sorted({str(v) for v in vals})
+    out = {}
+    for k, s in sets.items():
+        try:
+            out[k] = sorted(s)
+        except TypeError:
+            out[k] = sorted({str(v) for v in s})
+    return out
 
 @st.cache_data(ttl=600)
 def query_with_filters(
@@ -261,21 +278,23 @@ tab_table, tab_chat = st.tabs(["📋 Filter/Table", "💬 Chat"])
 with tab_table:
     st.subheader("فیلترها")
 
-    # ---- Debounced filter form ----
-    with st.form("filters_form", clear_on_submit=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            mols = st.multiselect("مولکول دارویی", options=get_unique(COLS["مولکول دارویی"]))
-            brands = st.multiselect("نام برند", options=get_unique(COLS["نام برند"]))
-            forms = st.multiselect("شکل دارویی", options=get_unique(COLS["شکل دارویی"]))
-            routes = st.multiselect("طریقه مصرف", options=get_unique(COLS["طریقه مصرف"]))
-        with c2:
-            provs = st.multiselect("نام تامین کننده", options=get_unique(COLS["نام تامین کننده"]))
-            years = st.multiselect("سال", options=get_unique(COLS["سال"]))
-            atc_exact = st.multiselect("ATC code (Exact)", options=get_unique(COLS["ATC code"]))
-            atc_prefix = st.text_input("فیلتر ATC بر اساس پیشوند (مثل N06A)", value="")
+with st.spinner("Loading filter lists..."):
+    UNI = load_all_uniques()
 
-        prod_type = st.multiselect("وارداتی/تولید داخل", options=get_unique(COLS["وارداتی/تولید داخل"]))
+c1, c2 = st.columns(2)
+with c1:
+    mols   = st.multiselect("مولکول دارویی", options=UNI["مولکول دارویی"])
+    brands = st.multiselect("نام برند", options=UNI["نام برند"])
+    forms  = st.multiselect("شکل دارویی", options=UNI["شکل دارویی"])
+    routes = st.multiselect("طریقه مصرف", options=UNI["طریقه مصرف"])
+with c2:
+    provs  = st.multiselect("نام تامین کننده", options=UNI["نام تامین کننده"])
+    years  = st.multiselect("سال", options=UNI["سال"])
+    atc_exact = st.multiselect("ATC code (Exact)", options=UNI["ATC code"])
+    atc_prefix = st.text_input("فیلتر ATC بر اساس پیشوند (مثل N06A)", value="")
+
+prod_type = st.multiselect("وارداتی/تولید داخل", options=UNI["وارداتی/تولید داخل"])
+
 
         st.markdown("---")
         colA, colB, colC = st.columns(3)
