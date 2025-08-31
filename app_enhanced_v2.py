@@ -65,6 +65,33 @@ def get_openai_client():
     return OpenAI(api_key=key)
 
 TABLE = "Amarname_sheet1"  # keep exactly as user requested
+with st.expander("🔎 Data health check"):
+    @st.cache_data(ttl=120)
+    def db_total_rows():
+        try:
+            r = sb.table(TABLE).select("*", count="exact", head=True).execute()
+            return r.count or 0
+        except Exception:
+            return None
+
+    @st.cache_data(ttl=300)
+    def count_by_year():
+        counts = {}
+        start = 0
+        while True:
+            r = sb.table(TABLE).select('"سال"').range(start, start + 999).execute()
+            rows = r.data or []
+            if not rows:
+                break
+            for rec in rows:
+                y = rec.get("سال")
+                if y:
+                    counts[y] = counts.get(y, 0) + 1
+            start += len(rows)
+        return dict(sorted(counts.items(), key=lambda x: str(x[0])))
+
+    st.write("Total rows:", db_total_rows())
+    st.write("Rows by سال:", count_by_year())
 
 # ---------------------------- Shared constants ----------------------------
 ALLOWED_DIMS = [
@@ -118,28 +145,24 @@ def run_pivot_rpc(dim1: str, dim2: str, metric: str, y1: int, y2: int) -> pd.Dat
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def get_unique(col: str, page_size: int = 50000):
-    """
-    Get ALL distinct values for a column by paging through the table.
-    Works even if column names have spaces or non-ASCII (e.g. Persian).
-    """
+def get_unique(col: str, page_size: int = 1000):
+    """Read the WHOLE table in pages and dedupe."""
     vals = set()
 
-    # For columns with spaces/Unicode, quote the column name for PostgREST
     def quote_col(c: str) -> str:
-        # wrap in double quotes unless it's simple ASCII without spaces
+        # Quote Farsi / spaced names so Supabase understands them
         try:
-            ascii_ok = c.isascii() and c.replace("_", "").isalnum()
+            simple = c.isascii() and c.replace("_", "").isalnum()
         except Exception:
-            ascii_ok = False
-        return c if ascii_ok else f'"{c}"'
+            simple = False
+        return c if simple else f'"{c}"'
 
     sel = quote_col(col)
-
     start = 0
+    safety_loops = 0
+
     while True:
         end = start + page_size - 1
-        # fetch ONLY that column to keep it light
         r = sb.table(TABLE).select(sel).range(start, end).execute()
         rows = r.data or []
         if not rows:
@@ -149,16 +172,16 @@ def get_unique(col: str, page_size: int = 50000):
             v = row.get(col)
             if v is None:
                 continue
-            if isinstance(v, str) and v.strip() == "":
+            if isinstance(v, str) and not v.strip():
                 continue
             vals.add(v)
 
-        # stop if last page was smaller than page_size
-        if len(rows) < page_size:
+        # IMPORTANT: move forward by how many we actually received (handles server caps like 1000)
+        start += len(rows)
+        safety_loops += 1
+        if safety_loops > 10000:  # hard safety
             break
-        start = end + 1
 
-    # sort safely
     try:
         return sorted(vals)
     except TypeError:
