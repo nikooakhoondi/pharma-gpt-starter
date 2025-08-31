@@ -65,6 +65,7 @@ def get_openai_client():
     return OpenAI(api_key=key)
 
 TABLE = "Amarname_sheet1"  # keep exactly as user requested
+
 with st.expander("🔎 Data health check"):
     @st.cache_data(ttl=120)
     def db_total_rows():
@@ -75,26 +76,33 @@ with st.expander("🔎 Data health check"):
             return None
 
     @st.cache_data(ttl=300)
-def count_by_year():
-    counts = {}
-    start = 0
-    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
-    while True:
-        r = sb.table(TABLE).select('"سال"').range(start, start + 999).execute()
-        rows = r.data or []
-        if not rows:
-            break
-        for rec in rows:
-            y = rec.get("سال")
-            if y is None: 
-                continue
-            y = str(y).translate(trans).strip()
-            # keep only the digits part
-            m = pd.Series([y]).str.extract(r"(\d+)")[0].iloc[0]
-            if pd.notna(m):
-                counts[int(m)] = counts.get(int(m), 0) + 1
-        start += len(rows)
-    return dict(sorted(counts.items(), key=lambda x: x[0]))
+    def count_by_year():
+        counts = {}
+        start = 0
+        trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+        while True:
+            r = sb.table(TABLE).select('"سال"').range(start, start + 999).execute()
+            rows = r.data or []
+            if not rows:
+                break
+            for rec in rows:
+                y = rec.get("سال")
+                if y is None:
+                    continue
+                y = str(y).translate(trans).strip()
+                # keep only digits
+                import re
+                m = re.search(r"\d+", y)
+                if m:
+                    yy = int(m.group(0))
+                    counts[yy] = counts.get(yy, 0) + 1
+            start += len(rows)
+        # sort by numeric year
+        return dict(sorted(counts.items(), key=lambda x: x[0]))
+
+    st.write("Total rows:", db_total_rows())
+    st.write("Rows by سال:", count_by_year())
+
 
 # ---------------------------- Shared constants ----------------------------
 ALLOWED_DIMS = [
