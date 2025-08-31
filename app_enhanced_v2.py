@@ -75,23 +75,26 @@ with st.expander("🔎 Data health check"):
             return None
 
     @st.cache_data(ttl=300)
-    def count_by_year():
-        counts = {}
-        start = 0
-        while True:
-            r = sb.table(TABLE).select('"سال"').range(start, start + 999).execute()
-            rows = r.data or []
-            if not rows:
-                break
-            for rec in rows:
-                y = rec.get("سال")
-                if y:
-                    counts[y] = counts.get(y, 0) + 1
-            start += len(rows)
-        return dict(sorted(counts.items(), key=lambda x: str(x[0])))
-
-    st.write("Total rows:", db_total_rows())
-    st.write("Rows by سال:", count_by_year())
+def count_by_year():
+    counts = {}
+    start = 0
+    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+    while True:
+        r = sb.table(TABLE).select('"سال"').range(start, start + 999).execute()
+        rows = r.data or []
+        if not rows:
+            break
+        for rec in rows:
+            y = rec.get("سال")
+            if y is None: 
+                continue
+            y = str(y).translate(trans).strip()
+            # keep only the digits part
+            m = pd.Series([y]).str.extract(r"(\d+)")[0].iloc[0]
+            if pd.notna(m):
+                counts[int(m)] = counts.get(int(m), 0) + 1
+        start += len(rows)
+    return dict(sorted(counts.items(), key=lambda x: x[0]))
 
 # ---------------------------- Shared constants ----------------------------
 ALLOWED_DIMS = [
@@ -236,6 +239,14 @@ def query_with_filters(
         return pd.DataFrame()
 
     df = pd.DataFrame(res.data or [])
+    # Normalize year values (handles Persian digits / whitespace)
+if not df.empty and "سال" in df.columns:
+    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+    df["سال"] = (
+        df["سال"].astype(str).str.translate(trans).str.strip()
+        .str.extract(r"(\d+)")[0].astype("Int64")
+    )
+
     if not df.empty and sort_by in df.columns:
         df = df.sort_values(sort_by, ascending=not descending, kind="mergesort")
     return df
@@ -416,10 +427,11 @@ with tab_table:
             )
 
         prod_type = st.multiselect(
-            "وارداتی/تولیدی داخل",
-            options=get_facet_options("وارداتی/تولید داخل", current),
-            key="prod_type"
-        )
+    "وارداتی/تولید داخل",
+    options=get_facet_options("وارداتی/تولید داخل", current),
+    key="prod_type"
+    )
+
 
         st.markdown("---")
         colA, colB, colC = st.columns(3)
@@ -513,69 +525,7 @@ with tab_table:
             st.caption(f"ردیف‌های تجمیع‌شده: {len(g)}  |  ستون تجمیع: {agg_metric}")
 
 
-    # ---- Run filtered query ----
-    df = query_with_filters(
-        mols, brands, forms, routes, provs, years, atc_exact, atc_prefix, prod_type,
-        sort_by, descending, limit_rows
-    )
-
-    st.markdown("### خروجی فیلتر شده")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    st.download_button("دانلود CSV", df.to_csv(index=False).encode("utf-8-sig"), "filtered.csv", "text/csv")
-
-    # ---- Aggregation & Chart (Pivot-like, computed client-side from filtered rows) ----
-    st.markdown("---")
-    st.subheader("نمودار از داده‌های فیلتر شده")
-
-    # Choose dimensions & metric for the chart (same idea as the old Pivot tab)
-    agg_dims_all = [
-        "سال","کد ژنریک","نام ژنریک","مولکول دارویی","نام تجاری فرآورده",
-        "شرکت تامین کننده","تولیدی/وارداتی","route","dosage form","atc code","Anatomical",
-    ]
-    agg_metric_all = ["ارزش ریالی", "قیمت", "تعداد تامین شده"]
-
-    cc1, cc2, cc3 = st.columns(3)
-    with cc1:
-        agg_dim1 = st.selectbox("بعد اول (Dimension 1)", agg_dims_all, index=0)
-    with cc2:
-        agg_dim2 = st.selectbox("بعد دوم (اختیاری)", ["— هیچ —"] + agg_dims_all, index=0)
-        agg_dim2 = None if agg_dim2 == "— هیچ —" else agg_dim2
-    with cc3:
-        agg_metric = st.selectbox("متریک (مجموع)", agg_metric_all, index=0)
-
-    if df.empty:
-        st.info("پس از اعمال فیلترها، داده‌ای برای تجمیع وجود ندارد.")
-    else:
-        missing_cols = [c for c in [agg_dim1, agg_dim2, agg_metric] if c and c not in df.columns]
-        if missing_cols:
-            st.warning(f"ستون‌های مورد نیاز در خروجی یافت نشد: {missing_cols}")
-        else:
-            # Group & sum
-            group_cols = [c for c in [agg_dim1, agg_dim2] if c]
-            try:
-                g = df.groupby(group_cols, dropna=False)[agg_metric].sum().reset_index()
-            except Exception:
-                # In case types are mixed, coerce to string for grouping dims
-                tmp = df.copy()
-                for c in group_cols:
-                    tmp[c] = tmp[c].astype(str)
-                g = tmp.groupby(group_cols, dropna=False)[agg_metric].sum().reset_index()
-
-            # Build a label column similar to the previous pivot chart
-            if agg_dim2:
-                label = g[agg_dim1].astype(str).fillna("") + " — " + g[agg_dim2].astype(str).fillna("")
-            else:
-                label = g[agg_dim1].astype(str).fillna("")
-
-            chart_df = (
-                pd.DataFrame({"label": label, "total_value": g[agg_metric]})
-                .sort_values("total_value", ascending=False)
-            )
-
-            st.bar_chart(chart_df.set_index("label")[["total_value"]])
-            st.caption(f"ردیف‌های تجمیع‌شده: {len(g)}  |  ستون تجمیع: {agg_metric}")
-
-
+    
 # ============================ GPT DATA CHAT ============================
 with tab_chat:
     st.subheader("گفتگو با دیتابیس")
