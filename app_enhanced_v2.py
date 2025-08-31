@@ -278,23 +278,17 @@ tab_table, tab_chat = st.tabs(["📋 Filter/Table", "💬 Chat"])
 with tab_table:
     st.subheader("فیلترها")
 
-with st.spinner("Loading filter lists..."):
-    UNI = load_all_uniques()
+    with st.spinner("Loading filter lists..."):
+        UNI = load_all_uniques()
 
-c1, c2 = st.columns(2)
-with c1:
-    mols   = st.multiselect("مولکول دارویی", options=UNI["مولکول دارویی"])
-    brands = st.multiselect("نام برند", options=UNI["نام برند"])
-    forms  = st.multiselect("شکل دارویی", options=UNI["شکل دارویی"])
-    routes = st.multiselect("طریقه مصرف", options=UNI["طریقه مصرف"])
-with c2:
-    provs  = st.multiselect("نام تامین کننده", options=UNI["نام تامین کننده"])
-    years  = st.multiselect("سال", options=UNI["سال"])
-    atc_exact = st.multiselect("ATC code (Exact)", options=UNI["ATC code"])
-    atc_prefix = st.text_input("فیلتر ATC بر اساس پیشوند (مثل N06A)", value="")
-
-prod_type = st.multiselect("وارداتی/تولید داخل", options=UNI["وارداتی/تولید داخل"])
-
+    c1, c2 = st.columns(2)
+    with c1:
+        mols   = st.multiselect("مولکول دارویی", options=UNI["مولکول دارویی"])
+        brands = st.multiselect("نام برند", options=UNI["نام برند"])
+        forms  = st.multiselect("شکل دارویی", options=UNI["شکل دارویی"])
+        routes = st.multiselect("طریقه مصرف", options=UNI["طریقه مصرف"])
+    with c2:
+        provs  = st.multiselect("نام تامی
 
         st.markdown("---")
         colA, colB, colC = st.columns(3)
