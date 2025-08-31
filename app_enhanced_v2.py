@@ -372,86 +372,86 @@ with tab_table:
         UNI = load_all_uniques()
 
     # ---- Debounced filter form ----
-    with st.form("filters_form", clear_on_submit=False):
-        # current selections (empty lists if nothing yet)
-        current = {
-            "مولکول دارویی": st.session_state.get("mols", []),
-            "نام برند": st.session_state.get("brands", []),
-            "شکل دارویی": st.session_state.get("forms", []),
-            "طریقه مصرف": st.session_state.get("routes", []),
-            "نام تامین کننده": st.session_state.get("provs", []),
-            "سال": st.session_state.get("years", []),
-            "ATC code": st.session_state.get("atc_exact", []),
-            "ATC prefix": st.session_state.get("atc_prefix", ""),
-            "وارداتی/تولید داخل": st.session_state.get("prod_type", []),
-        }
+with st.form("filters_form", clear_on_submit=False):
+    # current selections (empty lists if nothing yet)
+    current = {
+        "مولکول دارویی": st.session_state.get("mols", []),
+        "نام برند": st.session_state.get("brands", []),
+        "شکل دارویی": st.session_state.get("forms", []),
+        "طریقه مصرف": st.session_state.get("routes", []),
+        "نام تامین کننده": st.session_state.get("provs", []),
+        "سال": st.session_state.get("years", []),
+        "ATC code": st.session_state.get("atc_exact", []),
+        "ATC prefix": st.session_state.get("atc_prefix", ""),
+        "وارداتی/تولید داخل": st.session_state.get("prod_type", []),
+    }
 
-        c1, c2 = st.columns(2)
-        with c1:
-            mols = st.multiselect(
-                "مولکول دارویی",
-                options=get_facet_options("مولکول دارویی", current),
-                key="mols"
-            )
-            brands = st.multiselect(
-                "نام برند",
-                options=get_facet_options("نام برند", current),
-                key="brands"
-            )
-            forms = st.multiselect(
-                "شکل دارویی",
-                options=get_facet_options("شکل دارویی", current),
-                key="forms"
-            )
-            routes = st.multiselect(
-                "طریقه مصرف",
-                options=get_facet_options("طریقه مصرف", current),
-                key="routes"
-            )
-        with c2:
-            provs = st.multiselect(
-                "نام تامین کننده",
-                options=get_facet_options("نام تامین کننده", current),
-                key="provs"
-            )
-            years = st.multiselect(
-                "سال",
-                options=get_facet_options("سال", current),
-                key="years"
-            )
-            atc_exact = st.multiselect(
-                "ATC code (Exact)",
-                options=get_facet_options("ATC code", current),
-                key="atc_exact"
-            )
-            atc_prefix = st.text_input(
-                "فیلتر ATC بر اساس پیشوند (مثل N06A)",
-                value=st.session_state.get("atc_prefix", ""),
-                key="atc_prefix"
-            )
+    c1, c2 = st.columns(2)
+    with c1:
+        mols = st.multiselect(
+            "مولکول دارویی",
+            options=get_facet_options("مولکول دارویی", current),
+            key="mols"
+        )
+        brands = st.multiselect(
+            "نام برند",
+            options=get_facet_options("نام برند", current),
+            key="brands"
+        )
+        forms = st.multiselect(
+            "شکل دارویی",
+            options=get_facet_options("شکل دارویی", current),
+            key="forms"
+        )
+        routes = st.multiselect(
+            "طریقه مصرف",
+            options=get_facet_options("طریقه مصرف", current),
+            key="routes"
+        )
+    with c2:
+        provs = st.multiselect(
+            "نام تامین کننده",
+            options=get_facet_options("نام تامین کننده", current),
+            key="provs"
+        )
+        years = st.multiselect(
+            "سال",
+            options=get_facet_options("سال", current),
+            key="years"
+        )
+        atc_exact = st.multiselect(
+            "ATC code (Exact)",
+            options=get_facet_options("ATC code", current),
+            key="atc_exact"
+        )
+        atc_prefix = st.text_input(
+            "فیلتر ATC بر اساس پیشوند (مثل N06A)",
+            value=st.session_state.get("atc_prefix", ""),
+            key="atc_prefix"
+        )
 
-        prod_type = st.multiselect(
-    "وارداتی/تولید داخل",
-    options=get_facet_options("وارداتی/تولید داخل", current),
-    key="prod_type"
+    prod_type = st.multiselect(
+        "وارداتی/تولید داخل",
+        options=get_facet_options("وارداتی/تولید داخل", current),
+        key="prod_type"
     )
 
+    st.markdown("---")
+    colA, colB, colC = st.columns(3)
+    with colA:
+        sort_by = st.selectbox(
+            "مرتب‌سازی بر اساس",
+            options=[COLS["ارزش ریالی"], COLS["تعداد تامین شده"], COLS["قیمت"], COLS["سال"]],
+            format_func=lambda c: [k for k, v in COLS.items() if v == c][0]
+        )
+    with colB:
+        descending = st.toggle("نزولی", value=True)
+    with colC:
+        limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
 
-        st.markdown("---")
-        colA, colB, colC = st.columns(3)
-        with colA:
-            sort_by = st.selectbox(
-                "مرتب‌سازی بر اساس",
-                options=[COLS["ارزش ریالی"], COLS["تعداد تامین شده"], COLS["قیمت"], COLS["سال"]],
-                format_func=lambda c: [k for k, v in COLS.items() if v == c][0]
-            )
-        with colB:
-            descending = st.toggle("نزولی", value=True)
-        with colC:
-            limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
+    # ✅ Submit button MUST be inside the form
+    applied = st.form_submit_button("اعمال فیلترها")
 
-        # ✅ Submit button must be inside the form
-        applied = st.form_submit_button("اعمال فیلترها")
 
     # ---- First-load & diffing logic (outside the form) ----
     if "filters_last" not in st.session_state:
