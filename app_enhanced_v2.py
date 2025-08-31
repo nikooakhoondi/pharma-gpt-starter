@@ -117,32 +117,25 @@ def run_pivot_rpc(dim1: str, dim2: str, metric: str, y1: int, y2: int) -> pd.Dat
         st.error(f"Supabase RPC failed: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=1800)  # cache 30 minutes
-def get_unique(col: str, limit: int = 20000):
+@st.cache_data(ttl=600)
+def get_unique(col: str):
     """
-    Ultra-robust distinct fetch for problematic column names (spaces, slashes, non-ASCII).
-    Strategy: pull a page with select('*') then dedupe client-side.
+    Fetch ALL distinct values of a column from Supabase, not just first 20k.
     """
     try:
-        r = sb.table(TABLE).select("*").limit(limit).execute()
-    except Exception as e:
-        st.error(f"Supabase select failed for uniques on '{col}': {e}")
-        return []
-
-    data = r.data or []
-    vals = []
-    for row in data:
-        v = row.get(col)
-        if v is None:
-            continue
-        if isinstance(v, str) and v.strip() == "":
-            continue
-        vals.append(v)
-
-    try:
+        # ask Supabase for distinct values directly
+        r = sb.table(TABLE).select(col, distinct=True).order(col).execute()
+        data = r.data or []
+        vals = []
+        for row in data:
+            v = row.get(col)
+            if v is None or (isinstance(v, str) and v.strip() == ""):
+                continue
+            vals.append(v)
         return sorted(set(vals))
-    except TypeError:
-        return sorted({str(v) for v in vals})
+    except Exception as e:
+        st.error(f"Supabase distinct failed for '{col}': {e}")
+        return []
 
 @st.cache_data(ttl=600)
 def query_with_filters(
