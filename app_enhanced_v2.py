@@ -295,19 +295,18 @@ with tab_table:
 
     prod_type = st.multiselect("وارداتی/تولید داخل", options=UNI["وارداتی/تولید داخل"])
 
-
-        st.markdown("---")
-        colA, colB, colC = st.columns(3)
-        with colA:
-            sort_by = st.selectbox(
-                "مرتب‌سازی بر اساس",
-                options=[COLS["ارزش ریالی"], COLS["تعداد تامین شده"], COLS["قیمت"], COLS["سال"]],
-                format_func=lambda c: [k for k, v in COLS.items() if v == c][0]
-            )
-        with colB:
-            descending = st.toggle("نزولی", value=True)
-        with colC:
-            limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
+    st.markdown("---")
+    colA, colB, colC = st.columns(3)
+    with colA:
+        sort_by = st.selectbox(
+            "مرتب‌سازی بر اساس",
+            options=[COLS["ارزش ریالی"], COLS["تعداد تامین شده"], COLS["قیمت"], COLS["سال"]],
+            format_func=lambda c: [k for k, v in COLS.items() if v == c][0]
+        )
+    with colB:
+        descending = st.toggle("نزولی", value=True)
+    with colC:
+        limit_rows = st.number_input("حداکثر ردیف", value=20000, min_value=1000, step=1000)
 
         applied = st.form_submit_button("اعمال فیلترها")
 
