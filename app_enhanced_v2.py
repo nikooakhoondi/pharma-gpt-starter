@@ -118,24 +118,51 @@ def run_pivot_rpc(dim1: str, dim2: str, metric: str, y1: int, y2: int) -> pd.Dat
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def get_unique(col: str):
+def get_unique(col: str, page_size: int = 50000):
     """
-    Fetch ALL distinct values of a column from Supabase, not just first 20k.
+    Get ALL distinct values for a column by paging through the table.
+    Works even if column names have spaces or non-ASCII (e.g. Persian).
     """
-    try:
-        # ask Supabase for distinct values directly
-        r = sb.table(TABLE).select(col, distinct=True).order(col).execute()
-        data = r.data or []
-        vals = []
-        for row in data:
+    vals = set()
+
+    # For columns with spaces/Unicode, quote the column name for PostgREST
+    def quote_col(c: str) -> str:
+        # wrap in double quotes unless it's simple ASCII without spaces
+        try:
+            ascii_ok = c.isascii() and c.replace("_", "").isalnum()
+        except Exception:
+            ascii_ok = False
+        return c if ascii_ok else f'"{c}"'
+
+    sel = quote_col(col)
+
+    start = 0
+    while True:
+        end = start + page_size - 1
+        # fetch ONLY that column to keep it light
+        r = sb.table(TABLE).select(sel).range(start, end).execute()
+        rows = r.data or []
+        if not rows:
+            break
+
+        for row in rows:
             v = row.get(col)
-            if v is None or (isinstance(v, str) and v.strip() == ""):
+            if v is None:
                 continue
-            vals.append(v)
-        return sorted(set(vals))
-    except Exception as e:
-        st.error(f"Supabase distinct failed for '{col}': {e}")
-        return []
+            if isinstance(v, str) and v.strip() == "":
+                continue
+            vals.add(v)
+
+        # stop if last page was smaller than page_size
+        if len(rows) < page_size:
+            break
+        start = end + 1
+
+    # sort safely
+    try:
+        return sorted(vals)
+    except TypeError:
+        return sorted({str(v) for v in vals})
 
 @st.cache_data(ttl=600)
 def query_with_filters(
