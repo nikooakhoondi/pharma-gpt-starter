@@ -257,7 +257,7 @@ if not df.empty and "سال" in df.columns:
 
     if not df.empty and sort_by in df.columns:
         df = df.sort_values(sort_by, ascending=not descending, kind="mergesort")
-    return df
+return df
 
 @st.cache_data(ttl=600)
 def get_facet_options(target_nice: str, selections: dict, page_size: int = 5000):
